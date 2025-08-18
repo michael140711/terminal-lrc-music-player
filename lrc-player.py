@@ -1,8 +1,10 @@
 """
-lrc-player3.5.0
+lrc-player3.5.1 8/18/2025 10:26 AM
+Added seek support- it's a bit buggy where tapping mulitple times can cause it to crash or to next song.
+Updated the time to 2 decimal places for easier lyc file for word-by-word time/lyrics fixing.
 """
 
-version = "3.5.0"
+version = "3.5.1"
 author = "Michael"
 
 import os
@@ -544,7 +546,7 @@ class MusicPlayer:
         # Get playback time
         current_time = self.get_playback_position()
         current_min = int(current_time // 60)
-        current_sec = int(current_time % 60)
+        current_sec = current_time % 60
 
         status = "⏸️  PAUSED " if self.is_paused else "▶️  PLAYING"
 
@@ -553,7 +555,7 @@ class MusicPlayer:
             f"{Fore.GREEN}Version: {version} | Author: {author}{Style.RESET_ALL}",
             f"{Fore.YELLOW}🎵 Now Playing: {song_name}{Style.RESET_ALL}",
             # f"{Fore.BLUE}📀 Track {self.current_song_index + 1} of {len(self.playlist)}{Style.RESET_ALL}",
-            f"{Fore.MAGENTA}{status} |{Fore.BLUE}📀 Track {self.current_song_index + 1} of {len(self.playlist)} | Time: {current_min:02d}:{current_sec:02d}{Style.RESET_ALL}",
+            f"{Fore.MAGENTA}{status} |{Fore.BLUE}📀 Track {self.current_song_index + 1} of {len(self.playlist)} | Time: {current_min:02d}:{current_sec:05.2f}{Style.RESET_ALL}",
             f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}",
             "",
         ]
