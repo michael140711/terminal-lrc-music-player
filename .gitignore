@@ -17,6 +17,8 @@ music/
 
 # Other files that not for git
 version control/
+temp/
+xsongs/
 *.cfg
 *.xml
 *.ini
