@@ -415,7 +415,11 @@ class MusicPlayer:
             if i == current_index:
                 # Current line - handle word-by-word highlighting for precise LRC
                 if lyric.is_precise and lyric.words:
-                    line_text = self.format_precise_lyric_line(lyric, current_time)
+                    # Provide the next line timestamp to refine last-word duration
+                    next_line_timestamp = None
+                    if current_index + 1 < len(self.current_lyrics):
+                        next_line_timestamp = self.current_lyrics[current_index + 1].timestamp
+                    line_text = self.format_precise_lyric_line(lyric, current_time, next_line_timestamp)
                     line = f"♪ {line_text}"
                 else:
                     # Standard highlighting for non-precise lines - use white instead of background
@@ -440,8 +444,13 @@ class MusicPlayer:
 
         return lyrics_display
 
-    def format_precise_lyric_line(self, lyric: LyricLine, current_time: float) -> str:
-        """Format a precise lyric line with smooth color transitions and character-by-character animation"""
+    def format_precise_lyric_line(self, lyric: LyricLine, current_time: float, next_line_timestamp: Optional[float] = None) -> str:
+        """Format a precise lyric line with smooth color transitions and character-by-character animation.
+
+        Duration of the active word is derived from the timestamp gap to the next word. For the last
+        word in the line, we use either the next line's timestamp (if provided) or fall back to the
+        median gap of the line (and finally a small default) to keep animation smooth.
+        """
         if not lyric.words:
             return f"{Fore.WHITE}{lyric.text}{Style.RESET_ALL}"
 
@@ -462,7 +471,33 @@ class MusicPlayer:
                 formatted_parts.append(f"{Fore.WHITE}{word.text}{Style.RESET_ALL}")
             elif i == current_word_index:
                 # Currently singing word - animate character by character
-                animated_word = self.animate_word_reveal(word, current_time)
+                # Compute dynamic duration using the gap to the next word; clamp to reasonable bounds
+                # to avoid flicker (too small) or sluggishness (too large).
+                min_dur, max_dur = 0.05, 2.5
+                if i + 1 < len(lyric.words):
+                    raw_duration = max(0.0, lyric.words[i + 1].timestamp - word.timestamp)
+                else:
+                    # Estimate last word duration
+                    if next_line_timestamp is not None:
+                        raw_duration = max(0.0, next_line_timestamp - word.timestamp)
+                    else:
+                        # Fallback: median of existing inter-word gaps in this line, or 0.5
+                        gaps = [
+                            max(0.0, lyric.words[j + 1].timestamp - lyric.words[j].timestamp)
+                            for j in range(len(lyric.words) - 1)
+                        ]
+                        if gaps:
+                            sorted_gaps = sorted(gaps)
+                            mid = len(sorted_gaps) // 2
+                            raw_duration = (
+                                (sorted_gaps[mid] if len(sorted_gaps) % 2 == 1 else
+                                 (sorted_gaps[mid - 1] + sorted_gaps[mid]) / 2.0)
+                            )
+                        else:
+                            raw_duration = 0.5
+
+                duration = max(min_dur, min(max_dur, raw_duration if raw_duration > 0 else 0.5))
+                animated_word = self.animate_word_reveal(word, current_time, duration)
                 formatted_parts.append(animated_word)
             else:
                 # Future words - blue
@@ -470,10 +505,16 @@ class MusicPlayer:
 
         return "".join(formatted_parts)
 
-    def animate_word_reveal(self, word: LyricWord, current_time: float) -> str:
-        """Create character-by-character reveal animation for current word"""
-        word_duration = 0.5  # Assume each word takes 0.5 seconds to fully reveal
-        word_progress = min(1.0, max(0.0, (current_time - word.timestamp) / word_duration))
+    def animate_word_reveal(self, word: LyricWord, current_time: float, duration: Optional[float] = None) -> str:
+        """Create character-by-character reveal animation for current word.
+
+        duration: The computed duration for revealing this word. If None, defaults to 0.5s.
+        """
+        word_duration = duration if duration is not None else 0.5
+        # Protect against zero/negative durations
+        if word_duration <= 0:
+            word_duration = 0.5
+        word_progress = min(1.0, max(0.0, (current_time - word.timestamp) / word_duration *2))
 
         # Calculate how many characters should be revealed
         chars_to_reveal = int(len(word.text) * word_progress)
