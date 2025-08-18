@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""
+r"""
 Update in place (creates .bak backup alongside the file):
 python "c:\Users\michael\OneDrive - gostepmobile.com\script-lrc\update-lrc-offset.py" "c:\Users\michael\OneDrive - gostepmobile.com\script-lrc\songs\sample.lrc" --in-place
+python "update-lrc-offset.py" "songs\benny blanco _ Halsey _ Khalid - Eastside.lrc" --in-place
 
 Print adjusted LRC to console:
 python "c:\Users\michael\OneDrive - gostepmobile.com\script-lrc\update-lrc-offset.py" "c:\Users\michael\OneDrive - gostepmobile.com\script-lrc\songs\sample.lrc"
