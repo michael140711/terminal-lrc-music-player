@@ -1,10 +1,8 @@
 """
-lrc-player3.5.1 8/18/2025 10:26 AM
-Added seek support- it's a bit buggy where tapping mulitple times can cause it to crash or to next song.
-Updated the time to 2 decimal places for easier lyc file for word-by-word time/lyrics fixing.
+lrc-player 8/18/2025 5:18 PM
 """
 
-version = "3.5.1"
+version = "3.5.3"
 author = "Michael"
 
 import os
@@ -15,6 +13,7 @@ from pathlib import Path
 import re
 from typing import List, Tuple, Optional
 import msvcrt  # Windows-specific for keyboard input
+import math  # <-- add this
 
 try:
     import pygame
@@ -514,7 +513,15 @@ class MusicPlayer:
         # Protect against zero/negative durations
         if word_duration <= 0:
             word_duration = 0.5
-        word_progress = min(1.0, max(0.0, (current_time - word.timestamp) / word_duration *2))
+
+        # Shrink the word duration when the duration is way too long, using a curve to scale it down
+        L = 1.0 # max duration for compression
+        Curve = 0.95  # Compression factor
+        compressed = L * (1 - math.exp(-word_duration / L * Curve))
+        word_duration = min(word_duration, compressed)
+        word_duration = max(0.05, word_duration)  # Ensure minimum duration
+
+        word_progress = min(1.0, max(0.0, (current_time - word.timestamp) / word_duration))
 
         # Calculate how many characters should be revealed
         chars_to_reveal = int(len(word.text) * word_progress)

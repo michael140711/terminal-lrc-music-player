@@ -1,0 +1,12 @@
+3.5.3 8/18/2025 5:20 PM
+ word-by-word duration is way to long for some of the words or the lyrics file itself that has incorrect timestamps.
+ added a calculated curve which set the max (L) to 1 second, and the curve value to 0.95.
+ This would shrink much more when the duration is much higher, using a non-linear calculation.
+
+3.5.2 8/18/2025 5:19 PM
+ fixed animation from fixed time to lyrics.
+
+
+lrc-player3.5.1 8/18/2025 10:26 AM
+Added seek support- it's a bit buggy where tapping mulitple times can cause it to crash or to next song.
+Updated the time to 2 decimal places for easier lyc file for word-by-word time/lyrics fixing.
