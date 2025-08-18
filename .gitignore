@@ -1,0 +1,19 @@
+# music files
+*.mp3
+*.flac
+*.wav
+*.ogg
+*.m4a
+*.wma
+*.ape
+
+# lyrics
+*.lrc
+
+# folders
+songs/
+lyrics/
+music/
+
+# Other files that not for git
+version control/
