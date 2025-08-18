@@ -17,3 +17,4 @@ music/
 
 # Other files that not for git
 version control/
+*.cfg
