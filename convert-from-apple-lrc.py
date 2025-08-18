@@ -1,22 +1,83 @@
 from pathlib import Path
 from xml.etree import ElementTree as ET
-import json, re, sys
+import json, re, sys, subprocess, shutil
 
-def coerce_to_ttml_string(path: Path) -> str:
+def _deep_find_ttml_and_display(obj):
+    """Recursively search for a TTML string and displayType in an Apple Music response."""
+    ttml_value = None
+    display_type = None
+
+    def visit(node):
+        nonlocal ttml_value, display_type
+        if isinstance(node, dict):
+            # capture displayType if present
+            pp = node.get("playParams") or {}
+            if isinstance(pp, dict) and display_type is None:
+                dt = pp.get("displayType")
+                if isinstance(dt, int):
+                    display_type = dt
+
+            if ttml_value is None and isinstance(node.get("ttml"), str):
+                ttml_value = node["ttml"]
+
+            # common Apple schema: { data: [ { attributes: { ttml, playParams.displayType } } ] }
+            attrs = node.get("attributes")
+            if isinstance(attrs, dict):
+                visit(attrs)
+
+            # traverse nested dict values
+            for v in node.values():
+                if ttml_value is not None and display_type is not None:
+                    break
+                visit(v)
+        elif isinstance(node, list):
+            for v in node:
+                if ttml_value is not None and display_type is not None:
+                    break
+                visit(v)
+
+    visit(obj)
+    return ttml_value, display_type
+
+def coerce_raw_to_ttml_input(raw: str) -> tuple[str, int | None]:
     """
     Accepts either:
       1) a raw TTML file (starts with <tt ...)
       2) a snippet like: "ttml": "<tt ...</tt>"
-      3) a JSON object that contains a 'ttml' field
+      3) a full Apple Music JSON object (possibly with data[])
+
+    Returns: (ttml_xml_string, displayType or None)
+    displayType: 2 = traditional (line), 3 = enhanced (word)
     """
-    raw = path.read_text(encoding="utf-8", errors="ignore").strip()
+    # Raw TTML
     if raw.lstrip().startswith("<tt"):
-        return raw
-    candidate = raw
-    if not candidate.lstrip().startswith("{"):
-        candidate = "{\n" + candidate.rstrip(", \n") + "\n}"
-    data = json.loads(candidate)
-    return data["ttml"]
+        return raw, None
+
+    # Try parse as JSON first
+    json_obj = None
+    try:
+        if raw.lstrip().startswith("{") or raw.lstrip().startswith("["):
+            json_obj = json.loads(raw)
+        else:
+            # likely a snippet like: "ttml": "<tt ..." (optionally with trailing comma)
+            snippet = "{\n" + raw.rstrip(", \n\r\t") + "\n}"
+            json_obj = json.loads(snippet)
+    except Exception:
+        # As a last resort, try to extract via regex
+        m = re.search(r'"ttml"\s*:\s*"(.*?)"\s*(,|\}|$)', raw, flags=re.S)
+        if m:
+            ttml_escaped = m.group(1)
+            return bytes(ttml_escaped, "utf-8").decode("unicode_escape"), None
+        raise
+
+    ttml, display_type = _deep_find_ttml_and_display(json_obj)
+    if not ttml:
+        raise ValueError("Unable to locate 'ttml' in the provided input")
+    return ttml, display_type
+
+def coerce_to_ttml_input(path: Path) -> tuple[str, int | None]:
+    raw = path.read_text(encoding="utf-8", errors="ignore").strip()
+    return coerce_raw_to_ttml_input(raw)
 
 def parse_time_to_seconds(ts: str) -> float:
     """Handles H:MM:SS.mmm, M:SS.mmm, or SS.mmm."""
@@ -46,14 +107,12 @@ def fmt_lrc_time(seconds: float) -> str:
     cs = total_centis % 100
     return f"{m:02d}:{s:02d}.{cs:02d}"
 
-def convert_ttml_to_elrc(input_path: Path, output_path: Path, subtract_itunes_offset: bool=True):
+def convert_ttml_string_to_elrc(ttml_xml: str, output_path: Path, display_type_hint: int | None = None, subtract_itunes_offset: bool=True):
     ns = {
         "tt": "http://www.w3.org/ns/ttml",
         "itunes": "http://music.apple.com/lyric-ttml-internal",
         "ttm": "http://www.w3.org/ns/ttml#metadata",
     }
-
-    ttml_xml = coerce_to_ttml_string(input_path)
     root = ET.fromstring(ttml_xml)
 
     # Apple’s iTunes TTML often carries a global lyricOffset
@@ -69,7 +128,7 @@ def convert_ttml_to_elrc(input_path: Path, output_path: Path, subtract_itunes_of
     dur_sec = parse_time_to_seconds(body.attrib.get("dur")) if (body is not None and body.attrib.get("dur")) else None
 
     out_lines = []
-    out_lines.append("[re:TTML→Enhanced LRC]")
+    out_lines.append("[re:TTML→LRC]")
     if dur_sec is not None:
         out_lines.append(f"[length:{fmt_lrc_time(dur_sec)}]")
     out_lines.append("[offset:0]")  # we bake the offset into timestamps
@@ -77,35 +136,122 @@ def convert_ttml_to_elrc(input_path: Path, output_path: Path, subtract_itunes_of
     def apply_offset(t):
         return t - offset_sec if subtract_itunes_offset else t + offset_sec
 
+    # Determine display type: prefer explicit hint; else inspect TTML's timing or content
+    if display_type_hint not in (2, 3):
+        # infer from tt itunes:timing attr or presence of spans
+        tt_timing = root.attrib.get(f"{{{ns['itunes']}}}timing") or root.attrib.get("itunes:timing")
+        if isinstance(tt_timing, str):
+            display_type = 3 if tt_timing.lower().strip() == "word" else 2
+        else:
+            # If any p has span children, treat as enhanced
+            has_spans = root.find(".//tt:body//tt:p//tt:span", ns) is not None
+            display_type = 3 if has_spans else 2
+    else:
+        display_type = display_type_hint
+
     for p in root.findall(".//tt:body//tt:p", ns):
         p_begin = p.attrib.get("begin")
         p_begin_sec = parse_time_to_seconds(p_begin) if p_begin else None
 
-        tokens = []
-        first_span_sec = None
-        for span in p.findall(".//tt:span", ns):
-            sb = span.attrib.get("begin")
-            sb_sec = parse_time_to_seconds(sb) if sb else (p_begin_sec or 0.0)
-            if first_span_sec is None:
-                first_span_sec = sb_sec
-            adj_sec = apply_offset(sb_sec)
-            word = (span.text or "").strip()
-            if word:
-                tokens.append(f"<{fmt_lrc_time(adj_sec)}>{word}")
+        if display_type == 2:
+            # Traditional line-by-line: one timestamp per p, plain text content
+            line_time_sec = p_begin_sec if p_begin_sec is not None else 0.0
+            line_time_adj = apply_offset(line_time_sec)
+            # Gather textual content (ignore timing spans if any)
+            text_content = "".join(p.itertext()).strip()
+            if not text_content:
+                continue
+            out_lines.append(f"[{fmt_lrc_time(line_time_adj)}] {text_content}")
+        else:
+            # Enhanced word-by-word
+            tokens = []
+            first_span_sec = None
+            for span in p.findall(".//tt:span", ns):
+                sb = span.attrib.get("begin")
+                sb_sec = parse_time_to_seconds(sb) if sb else (p_begin_sec or 0.0)
+                if first_span_sec is None:
+                    first_span_sec = sb_sec
+                adj_sec = apply_offset(sb_sec)
+                word = (span.text or "").strip()
+                if word:
+                    tokens.append(f"<{fmt_lrc_time(adj_sec)}>{word}")
 
-        if not tokens:
-            continue
+            if not tokens:
+                # Fallback: treat as a normal line if spans missing
+                line_time_sec = p_begin_sec if p_begin_sec is not None else 0.0
+                line_time_adj = apply_offset(line_time_sec)
+                text_content = "".join(p.itertext()).strip()
+                if text_content:
+                    out_lines.append(f"[{fmt_lrc_time(line_time_adj)}] {text_content}")
+                continue
 
-        line_time_sec = p_begin_sec if p_begin_sec is not None else (first_span_sec or 0.0)
-        line_time_adj = apply_offset(line_time_sec)
-        out_lines.append(f"[{fmt_lrc_time(line_time_adj)}] " + " ".join(tokens))
+            line_time_sec = p_begin_sec if p_begin_sec is not None else (first_span_sec or 0.0)
+            line_time_adj = apply_offset(line_time_sec)
+            out_lines.append(f"[{fmt_lrc_time(line_time_adj)}] " + " ".join(tokens))
 
     output_path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
 
+def convert_ttml_to_elrc(input_path: Path, output_path: Path, subtract_itunes_offset: bool=True):
+    ttml_xml, display_type_hint = coerce_to_ttml_input(input_path)
+    convert_ttml_string_to_elrc(ttml_xml, output_path, display_type_hint, subtract_itunes_offset=subtract_itunes_offset)
+
+def _read_clipboard_text() -> str:
+    """Return current clipboard text. Prefers PowerShell on Windows; falls back to Tk, pbpaste, or xclip."""
+    # Prefer PowerShell Get-Clipboard on Windows
+    try:
+        # -Raw to preserve newlines exactly
+        completed = subprocess.run([
+            "powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"
+        ], check=True, capture_output=True, text=True, encoding="utf-8")
+        return completed.stdout
+    except Exception:
+        pass
+    # Fallback to tkinter
+    try:
+        import tkinter as tk  # type: ignore
+        r = tk.Tk()
+        r.withdraw()
+        data = r.clipboard_get()
+        r.destroy()
+        return data
+    except Exception:
+        pass
+    # macOS pbpaste
+    if shutil.which("pbpaste"):
+        try:
+            completed = subprocess.run(["pbpaste"], check=True, capture_output=True, text=True, encoding="utf-8")
+            return completed.stdout
+        except Exception:
+            pass
+    # Linux xclip
+    if shutil.which("xclip"):
+        try:
+            completed = subprocess.run(["xclip", "-o", "-selection", "clipboard"], check=True, capture_output=True, text=True, encoding="utf-8")
+            return completed.stdout
+        except Exception:
+            pass
+    raise RuntimeError("Unable to read clipboard text on this system.")
+
 if __name__ == "__main__":
     # Usage:
-    #   python ttml_to_elrc.py /path/to/input.xml /path/to/output.lrc
-    in_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("sample.xml")
-    out_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("output_enhanced.lrc")
-    convert_ttml_to_elrc(in_path, out_path)
-    print("Wrote", out_path)
+    #   python convert-from-apple-lrc.py <input.json|xml|ttml> [output.lrc]
+    #   python convert-from-apple-lrc.py -c [output.lrc]       # read from clipboard
+    args = sys.argv[1:]
+    if args and args[0] in ("-c", "--clipboard"):
+        raw = _read_clipboard_text()
+        ttml_xml, dt_hint = coerce_raw_to_ttml_input(raw.strip())
+        default_out = "output_enhanced.lrc" if dt_hint == 3 else "output_traditional.lrc" if dt_hint == 2 else "output_enhanced.lrc"
+        out_path = Path(args[1]) if len(args) > 1 else Path(default_out)
+        convert_ttml_string_to_elrc(ttml_xml, out_path, dt_hint)
+        print("Wrote", out_path)
+    else:
+        in_path = Path(args[0]) if args else Path("sample.xml")
+        # Default output name hints based on inferred type
+        try:
+            _, dt_hint = coerce_to_ttml_input(in_path)
+        except Exception:
+            dt_hint = None
+        default_out = "output_enhanced.lrc" if dt_hint == 3 else "output_traditional.lrc" if dt_hint == 2 else "output_enhanced.lrc"
+        out_path = Path(args[1]) if len(args) > 1 else Path(default_out)
+        convert_ttml_to_elrc(in_path, out_path)
+        print("Wrote", out_path)
