@@ -1,3 +1,28 @@
+r''' 
+convert-from-apple-lrc.py — Convert Apple Music TTML/JSON to LRC (traditional or enhanced)
+
+Usage:
+    # Convert from a file (Apple Music JSON, a snippet containing "ttml": "<tt...>", or raw TTML)
+    python .\convert-from-apple-lrc.py <input.json|xml|ttml> [output.lrc]
+
+    # Read from clipboard (expects Apple Music JSON or a ttml snippet)
+    python .\convert-from-apple-lrc.py -c [output.lrc]
+
+Windows PowerShell notes:
+- Backslashes in paths are OK. PowerShell's escape character is the backtick (`), not the backslash.
+- Quote paths that contain spaces: "C:\Users\you\Music Files\sample.xml"
+- You can also use forward slashes if you prefer: C:/Users/you/Music Files/sample.xml
+
+Examples:
+    python .\convert-from-apple-lrc.py "sample copy 2.xml" output_enhanced.lrc
+    python .\convert-from-apple-lrc.py -c "C:\Temp\output_enhanced.lrc"
+
+Output behavior:
+- If the input indicates word timing (itunes:timing="Word" or spans per word), an enhanced LRC is produced.
+- If the input indicates line timing, a traditional LRC is produced.
+- Enhanced LRC lines include per-word timestamps like <mm:ss.cc>word, and a trailing end-time token is appended to capture the final word's unique end timing.
+'''
+
 from pathlib import Path
 from xml.etree import ElementTree as ET
 import json, re, sys, subprocess, shutil
@@ -163,21 +188,43 @@ def convert_ttml_string_to_elrc(ttml_xml: str, output_path: Path, display_type_h
                 continue
             out_lines.append(f"[{fmt_lrc_time(line_time_adj)}] {text_content}")
         else:
-            # Enhanced word-by-word
-            tokens = []
+            # Enhanced word-by-word: preserve spaces exactly as in TTML.
+            # We build the line by walking direct children and keeping .text and .tail.
+            line_parts: list[str] = []
             first_span_sec = None
-            for span in p.findall(".//tt:span", ns):
-                sb = span.attrib.get("begin")
-                sb_sec = parse_time_to_seconds(sb) if sb else (p_begin_sec or 0.0)
-                if first_span_sec is None:
-                    first_span_sec = sb_sec
-                adj_sec = apply_offset(sb_sec)
-                word = (span.text or "").strip()
-                if word:
-                    tokens.append(f"<{fmt_lrc_time(adj_sec)}>{word}")
+            last_span_end_sec = None
 
-            if not tokens:
-                # Fallback: treat as a normal line if spans missing
+            # Any leading text before the first child
+            if p.text:
+                line_parts.append(p.text)
+
+            for child in list(p):
+                # Only timestamp spans; copy other element text as plain text
+                if child.tag == f"{{{ns['tt']}}}span":
+                    sb = child.attrib.get("begin")
+                    se = child.attrib.get("end")
+                    sb_sec = parse_time_to_seconds(sb) if sb else (p_begin_sec or 0.0)
+                    if first_span_sec is None:
+                        first_span_sec = sb_sec
+                    if se:
+                        last_span_end_sec = parse_time_to_seconds(se)
+
+                    adj_sec = apply_offset(sb_sec)
+                    token_time = fmt_lrc_time(adj_sec)
+                    word_text = child.text or ""
+                    # Append token with its exact text (no trimming) to preserve intra-word splits
+                    line_parts.append(f"<{token_time}>{word_text}")
+                else:
+                    # Not a span: include its text content if any
+                    if child.text:
+                        line_parts.append(child.text)
+
+                # Preserve exact spacing or punctuation after the child
+                if child.tail:
+                    line_parts.append(child.tail)
+
+            # If no spans were found, fallback to traditional line output
+            if first_span_sec is None:
                 line_time_sec = p_begin_sec if p_begin_sec is not None else 0.0
                 line_time_adj = apply_offset(line_time_sec)
                 text_content = "".join(p.itertext()).strip()
@@ -185,9 +232,24 @@ def convert_ttml_string_to_elrc(ttml_xml: str, output_path: Path, display_type_h
                     out_lines.append(f"[{fmt_lrc_time(line_time_adj)}] {text_content}")
                 continue
 
-            line_time_sec = p_begin_sec if p_begin_sec is not None else (first_span_sec or 0.0)
+            # Base timestamp for the line
+            line_time_sec = p_begin_sec if p_begin_sec is not None else first_span_sec
             line_time_adj = apply_offset(line_time_sec)
-            out_lines.append(f"[{fmt_lrc_time(line_time_adj)}] " + " ".join(tokens))
+
+            # Append a trailing end-time token for the last word/line end if available
+            # Prefer the last span's end; otherwise fall back to p's end
+            p_end_attr = p.attrib.get("end")
+            if last_span_end_sec is None and p_end_attr:
+                try:
+                    last_span_end_sec = parse_time_to_seconds(p_end_attr)
+                except Exception:
+                    last_span_end_sec = None
+
+            if last_span_end_sec is not None:
+                end_adj = apply_offset(last_span_end_sec)
+                line_parts.append(f"<{fmt_lrc_time(end_adj)}>")
+
+            out_lines.append(f"[{fmt_lrc_time(line_time_adj)}] " + "".join(line_parts))
 
     output_path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
 
