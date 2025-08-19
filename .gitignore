@@ -21,5 +21,6 @@ temp/
 xsongs/
 *.cfg
 *.xml
+*.json
 *.ini
 *.log
