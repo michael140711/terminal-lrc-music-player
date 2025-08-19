@@ -1,18 +1,23 @@
 # -*- coding: utf-8 -*-
-# Async Playwright: reuse login (storage_state or persistent context) -> final GET only -> save response.json
-# 中英双语注释 / Bilingual comments
+"""Fetch syllable lyrics for songs listed in ``playlist.csv``."""
 
 import asyncio
+import csv
 import json
 from pathlib import Path
-from playwright.async_api import async_playwright, TimeoutError as PWTimeoutError
+
+from playwright.async_api import async_playwright
 
 MUSIC_HOME = "https://music.apple.com/"
-FINAL_URL  = "https://amp-api.music.apple.com/v1/catalog/us/songs/1446918510/syllable-lyrics"
+LYRIC_API = "https://amp-api.music.apple.com/v1/catalog/us/songs/{}/syllable-lyrics"
+
+CSV_FILE = Path("playlist.csv")
+LYRICS_DIR = Path("lyrics")
+DELAY_SECONDS = 10
 
 STATE_FILE = Path("state.json")
-use_persistent_context = False  # 若想用持久化上下文改 True；If you prefer persistent context, set True
-USER_DATA_DIR = "user-data"     # 持久化上下文的用户数据目录 / user profile dir for persistent context
+use_persistent_context = False
+USER_DATA_DIR = "user-data"
 
 GET_TOKENS_JS = """
 () => {
@@ -53,33 +58,41 @@ async ({ url, devToken, userToken }) => {
 }
 """
 
-async def pause_for_login():
-    print("\n== 手动登录 / Manual login ==")
-    print("1) 在弹出的浏览器里登录 Apple Music。Sign in on the Apple Music page.")
-    print("2) 登录成功后回到终端按回车。Press ENTER here after you’re signed in.")
-    await asyncio.get_event_loop().run_in_executor(None, input, "Press ENTER / 回车继续：")
+async def pause_for_login() -> None:
+    print("\n== Manual login required ==")
+    print("1) Sign in to Apple Music in the opened browser window.")
+    print("2) After successful login return here and press ENTER.")
+    await asyncio.get_event_loop().run_in_executor(None, input, "Press ENTER to continue: ")
 
-async def get_tokens_with_retry(page, attempts=6, delay_ms=1500):
+async def get_tokens_with_retry(page, attempts: int = 6, delay_ms: int = 1500):
     for i in range(1, attempts + 1):
-        t = await page.evaluate(GET_TOKENS_JS)
-        dev, usr = t.get("developerToken"), t.get("musicUserToken")
+        tokens = await page.evaluate(GET_TOKENS_JS)
+        dev, usr = tokens.get("developerToken"), tokens.get("musicUserToken")
         if dev and usr:
             return dev, usr
         if i < attempts:
-            print(f"Tokens not ready (try {i}/{attempts-1}). 令牌未就绪，等待中…")
+            print(f"Tokens not ready (attempt {i}/{attempts-1}). Waiting...")
             await page.wait_for_timeout(delay_ms)
     return None, None
 
-async def main():
+def sanitize_filename(name: str) -> str:
+    return "".join(c for c in name if c not in '\\/:*?"<>|').strip()
+
+async def main() -> None:
+    songs = []
+    if CSV_FILE.exists():
+        with CSV_FILE.open(newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            songs = list(reader)
+    else:
+        print(f"{CSV_FILE} not found")
+        return
+
     async with async_playwright() as p:
         if use_persistent_context:
-            # 方案 B：持久化上下文 / Persistent context
-            context = await p.chromium.launch_persistent_context(
-                USER_DATA_DIR, headless=False
-            )
+            context = await p.chromium.launch_persistent_context(USER_DATA_DIR, headless=False)
             page = await context.new_page()
         else:
-            # 方案 A：storage_state
             browser = await p.chromium.launch(headless=False)
             if STATE_FILE.exists():
                 context = await browser.new_context(storage_state=str(STATE_FILE))
@@ -87,42 +100,40 @@ async def main():
                 context = await browser.new_context()
             page = await context.new_page()
 
-        # 打开站点 / Open site
         await page.goto(MUSIC_HOME, wait_until="domcontentloaded")
 
-        # 如果没有 state，先登录并保存 / If no state yet, login and save
         if not use_persistent_context and not STATE_FILE.exists():
             await pause_for_login()
-            # 保存 cookies & storage / Save authenticated state
             await context.storage_state(path=str(STATE_FILE))
-            print(f"✅ Saved login state to {STATE_FILE} .")
+            print(f"Saved login state to {STATE_FILE}")
 
-        # 获取 MusicKit 令牌 / Get tokens
         dev_token, user_token = await get_tokens_with_retry(page)
         if not dev_token or not user_token:
-            print("Try opening an album/track on the page to initialize MusicKit, then retry.")
+            print("Tokens missing; try interacting with the site then retry.")
             await page.wait_for_timeout(2000)
             dev_token, user_token = await get_tokens_with_retry(page, attempts=3, delay_ms=2000)
         if not dev_token or not user_token:
-            raise RuntimeError("Failed to obtain MusicKit tokens. 无法获取 MusicKit 令牌。")
+            raise RuntimeError("Failed to acquire MusicKit tokens.")
 
-        print("✅ Tokens acquired / 已获取令牌：")
-        print(f"- developerToken: {dev_token[:20]}... (truncated)")
-        print(f"- musicUserToken: {user_token[:20]}... (truncated)")
+        LYRICS_DIR.mkdir(parents=True, exist_ok=True)
+        for row in songs:
+            catalog_id = row.get("catalogId")
+            song_name = row.get("song name", "")
+            artist_name = row.get("artistName", "")
+            content_rating = row.get("contentRating", "")
+            url = LYRIC_API.format(catalog_id)
+            final = await page.evaluate(
+                FETCH_JSON_JS,
+                {"url": url, "devToken": dev_token, "userToken": user_token},
+            )
+            fname = f"{song_name}{(' ' + content_rating) if content_rating else ''} - {artist_name}.json"
+            file_path = LYRICS_DIR / sanitize_filename(fname)
+            file_path.write_text(
+                json.dumps(final, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            print(f"Saved {file_path}")
+            await asyncio.sleep(DELAY_SECONDS)
 
-        # 直接请求最终 URL（浏览器会在幕后自动做 CORS 预检）
-        final = await page.evaluate(FETCH_JSON_JS, {
-            "url": FINAL_URL,
-            "devToken": dev_token,
-            "userToken": user_token
-        })
-        print(f"Final GET status: {final['status']} ok={final['ok']} URL={final['url']}")
-
-        # 保存响应 / Save response
-        Path("response.json").write_text(json.dumps(final, ensure_ascii=False, indent=2), encoding="utf-8")
-        print("✅ Saved to response.json / 已保存响应到 response.json")
-
-        # 清理 / Cleanup
         if not use_persistent_context:
             await browser.close()
         else:

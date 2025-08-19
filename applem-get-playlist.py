@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Fetch Apple Music playlist and extract song IDs using Playwright.
+"""Fetch Apple Music playlist JSON using Playwright.
 
 This script opens Apple Music in a real browser so the user can sign in.
 The authenticated cookies and localStorage are stored for future runs.
 After obtaining `developerToken` and `musicUserToken` from MusicKit it
 makes an authenticated request to the playlist endpoint and saves the
-returned song IDs to ``song_ids.txt``.  Tokens are also persisted to
+JSON response to ``playlist.json``. Tokens are also persisted to
 ``tokens.json`` for reuse.
 """
 
@@ -41,7 +41,6 @@ PLAYLIST_QUERY = {
 
 STATE_FILE = Path("state.json")
 TOKENS_FILE = Path("tokens.json")
-SONG_IDS_FILE = Path("song_ids.txt")
 use_persistent_context = False
 USER_DATA_DIR = "user-data"
 
@@ -146,15 +145,10 @@ async def main(playlist_id: str) -> None:
             FETCH_JSON_JS,
             {"url": playlist_url, "devToken": dev_token, "userToken": user_token},
         )
-        Path("playlist_response.json").write_text(
-            json.dumps(final, ensure_ascii=False, indent=2), encoding="utf-8"
+        Path("playlist.json").write_text(
+            json.dumps(final.get("data"), ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        print("Playlist response saved to playlist_response.json")
-
-        songs = final.get("data", {}).get("resources", {}).get("songs", {})
-        song_ids = list(songs.keys())
-        SONG_IDS_FILE.write_text("\n".join(song_ids), encoding="utf-8")
-        print(f"Extracted {len(song_ids)} song IDs -> {SONG_IDS_FILE}")
+        print("Playlist response saved to playlist.json")
 
         if not use_persistent_context:
             await browser.close()
