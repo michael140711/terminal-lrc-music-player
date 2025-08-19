@@ -280,16 +280,26 @@ def convert_ttml_string_to_elrc(ttml_xml: str, output_path: Path, display_type_h
             line_time_sec = p_begin_sec if p_begin_sec is not None else first_span_sec
             line_time_adj = apply_offset(line_time_sec)
 
-            # Determine trailing end token: prefer the line's p@end if available, else use last span end
+            # Determine trailing end token.
+            # - With -mainonly: prefer last main span end (background excluded). Fall back to p@end only if needed.
+            # - Without -mainonly: prefer the full line's p@end, else use the last span end.
             p_end_attr = p.attrib.get("end")
             end_sec = None
-            if p_end_attr:
-                try:
-                    end_sec = parse_time_to_seconds(p_end_attr)
-                except Exception:
-                    end_sec = None
-            if end_sec is None:
+            if main_only:
                 end_sec = last_span_end_sec
+                if end_sec is None and p_end_attr:
+                    try:
+                        end_sec = parse_time_to_seconds(p_end_attr)
+                    except Exception:
+                        end_sec = None
+            else:
+                if p_end_attr:
+                    try:
+                        end_sec = parse_time_to_seconds(p_end_attr)
+                    except Exception:
+                        end_sec = None
+                if end_sec is None:
+                    end_sec = last_span_end_sec
             if end_sec is not None:
                 end_adj = apply_offset(end_sec)
                 line_parts.append(f"<{fmt_lrc_time(end_adj)}>")
