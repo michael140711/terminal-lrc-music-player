@@ -4,6 +4,7 @@
 import asyncio
 import csv
 import json
+import random
 from pathlib import Path
 
 from playwright.async_api import async_playwright
@@ -13,7 +14,7 @@ LYRIC_API = "https://amp-api.music.apple.com/v1/catalog/us/songs/{}/syllable-lyr
 
 CSV_FILE = Path("playlist.csv")
 LYRICS_DIR = Path("lyrics")
-DELAY_SECONDS = 10
+DELAY_SECONDS = random.randint(3, 20)
 
 STATE_FILE = Path("state.json")
 use_persistent_context = False
@@ -79,11 +80,20 @@ def sanitize_filename(name: str) -> str:
     return "".join(c for c in name if c not in '\\/:*?"<>|').strip()
 
 async def main() -> None:
-    songs = []
+    # Read CSV: we expect columns like
+    # 0: catalogId (numeric), 1: unknown, 2: song name, 3: artist, 4: album, 5: content rating ('explicit' or blank)
+    rows = []
     if CSV_FILE.exists():
         with CSV_FILE.open(newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            songs = list(reader)
+            reader = csv.reader(f)
+            for row in reader:
+                if not row:
+                    continue
+                # If there's an accidental header, skip non-numeric first column
+                first = (row[0] or "").strip()
+                if not first.isdigit():
+                    continue
+                rows.append(row)
     else:
         print(f"{CSV_FILE} not found")
         return
@@ -116,22 +126,40 @@ async def main() -> None:
             raise RuntimeError("Failed to acquire MusicKit tokens.")
 
         LYRICS_DIR.mkdir(parents=True, exist_ok=True)
-        for row in songs:
-            catalog_id = row.get("catalogId")
-            song_name = row.get("song name", "")
-            artist_name = row.get("artistName", "")
-            content_rating = row.get("contentRating", "")
-            url = LYRIC_API.format(catalog_id)
-            final = await page.evaluate(
-                FETCH_JSON_JS,
-                {"url": url, "devToken": dev_token, "userToken": user_token},
-            )
-            fname = f"{song_name}{(' ' + content_rating) if content_rating else ''} - {artist_name}.json"
-            file_path = LYRICS_DIR / sanitize_filename(fname)
-            file_path.write_text(
-                json.dumps(final, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-            print(f"Saved {file_path}")
+        for row in rows:
+            try:
+                catalog_id = (row[0] or "").strip()
+                song_name = (row[2] if len(row) > 2 else "").strip()
+                artist_name = (row[3] if len(row) > 3 else "").strip()
+                content_col = (row[5] if len(row) > 5 else "").strip()
+                is_explicit = content_col.lower() == "explicit"
+
+                if not catalog_id:
+                    print("Skipping row with missing catalog id:", row)
+                    continue
+
+                url = LYRIC_API.format(catalog_id)
+                print(f"Fetching: {song_name} - {artist_name} | {url}")
+                final = await page.evaluate(
+                    FETCH_JSON_JS,
+                    {"url": url, "devToken": dev_token, "userToken": user_token},
+                )
+
+                # Build filename as "{3rd column} - {4th column}" with optional "(Explicit)"
+                base_name = f"{song_name} - {artist_name}"
+                if is_explicit:
+                    base_name += " (Explicit)"
+                fname = f"{base_name}.json"
+
+                file_path = LYRICS_DIR / sanitize_filename(fname)
+                file_path.write_text(
+                    json.dumps(final, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                status = final.get("status")
+                print(f"Saved {file_path} (status={status})")
+            except Exception as e:
+                print("Error processing row:", row)
+                print(e)
             await asyncio.sleep(DELAY_SECONDS)
 
         if not use_persistent_context:
