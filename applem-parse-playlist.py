@@ -8,36 +8,38 @@ from pathlib import Path
 PLAYLIST_JSON = Path("playlist.json")
 OUTPUT_CSV = Path("playlist.csv")
 
-FIELDNAMES = [
-    "catalogId",
-    "songId",
-    "song name",
-    "artistName",
-    "albumName",
-    "contentRating",
-    "hasLyrics",
-]
+def _extract_songs(data: dict) -> list:
+    """Return song entries from the playlist JSON."""
+    if "library-songs" in data:
+        return data["library-songs"]
+    return [
+        item
+        for item in data.get("included", [])
+        if item.get("type") == "library-songs"
+    ]
+
 
 def main() -> None:
     data = json.loads(PLAYLIST_JSON.read_text(encoding="utf-8"))
-    songs = data.get("library-songs", [])
+    songs = _extract_songs(data)
     rows = []
     for item in songs:
         attrs = item.get("attributes", {})
         params = attrs.get("playParams", {})
-        rows.append({
-            "catalogId": params.get("catalogId", ""),
-            "songId": params.get("id", ""),
-            "song name": attrs.get("name", ""),
-            "artistName": attrs.get("artistName", ""),
-            "albumName": attrs.get("albumName", ""),
-            "contentRating": attrs.get("contentRating", ""),
-            "hasLyrics": str(bool(attrs.get("hasLyrics", False))).lower(),
-        })
+        rows.append(
+            [
+                params.get("catalogId", ""),
+                params.get("id", ""),
+                attrs.get("name", ""),
+                attrs.get("artistName", ""),
+                attrs.get("albumName", ""),
+                attrs.get("contentRating", ""),
+                str(bool(attrs.get("hasLyrics", False))).lower(),
+            ]
+        )
 
     with OUTPUT_CSV.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
-        writer.writeheader()
+        writer = csv.writer(f)
         writer.writerows(rows)
 
 if __name__ == "__main__":
