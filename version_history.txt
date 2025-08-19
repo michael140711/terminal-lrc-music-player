@@ -1,6 +1,6 @@
-3.5.3 8/18/2025 5:20 PM
+3.6.0 8/19/2025 9:31 AM
  word-by-word duration is way to long for some of the words or the lyrics file itself that has incorrect timestamps.
- added a calculated curve which set the max (L) to 1 second, and the curve value to 0.95.
+ added a calculated curve which set the max (L) to 2 second, and the curve value to 0.95.
  This would shrink much more when the duration is much higher, using a non-linear calculation.
 
 3.5.2 8/18/2025 5:19 PM

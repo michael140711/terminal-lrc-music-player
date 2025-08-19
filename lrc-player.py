@@ -2,7 +2,7 @@
 lrc-player 8/18/2025 5:18 PM
 """
 
-version = "3.5.3"
+version = "3.6.0"
 author = "Michael"
 
 import os
@@ -515,7 +515,7 @@ class MusicPlayer:
             word_duration = 0.5
 
         # Shrink the word duration when the duration is way too long, using a curve to scale it down
-        L = 1.0 # max duration for compression
+        L = 2.0 # max duration for compression
         Curve = 0.95  # Compression factor
         compressed = L * (1 - math.exp(-word_duration / L * Curve))
         word_duration = min(word_duration, compressed)
