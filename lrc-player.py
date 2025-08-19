@@ -2,7 +2,7 @@
 lrc-player 8/18/2025 5:18 PM
 """
 
-version = "3.6.0"
+version = "3.6.5"
 author = "Michael"
 
 import os
