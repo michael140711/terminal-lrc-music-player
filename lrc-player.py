@@ -40,9 +40,11 @@ SONGS_DIRNAME = "songs"
 
 
 class LyricWord:
-    def __init__(self, timestamp: float, text: str):
+    def __init__(self, timestamp: float, text: str, end_timestamp: Optional[float] = None):
         self.timestamp = timestamp
         self.text = text
+        # Optional explicit end time for this word (e.g., <start>word<end>)
+        self.end_timestamp = end_timestamp
 
     def __repr__(self):
         return f"LyricWord({self.timestamp:.3f}, '{self.text}')"
@@ -82,19 +84,29 @@ class LRCParser:
     @staticmethod
     def parse_precise_lrc_line(line: str) -> Tuple[float, List[LyricWord]]:
         """Parse a precise LRC line with word-by-word timing"""
-        words = []
+        words: List[LyricWord] = []
 
-        # Pattern to match word timing: <timestamp>word_or_space
-        word_pattern = r'<(\d{2}:\d{2}\.\d{2})>([^<]*?)(?=<|$)'
+        # Pattern to match any tag and the text until the next tag or end-of-line.
+        # If the text is empty, we treat this as a closing tag for the previous word's end.
+        word_pattern = r'<(\d{2}:\d{2}\.\d{2,3})>([^<]*?)(?=<|$)'
 
+        last_word: Optional[LyricWord] = None
         for match in re.finditer(word_pattern, line):
             timestamp_str = match.group(1)
-            word_text = match.group(2)
+            segment_text = match.group(2)
+            ts = LRCParser.parse_timestamp(f'<{timestamp_str}>')
 
-            # Don't strip spaces - preserve them for proper display
-            if word_text:  # Only skip completely empty matches
-                timestamp = LRCParser.parse_timestamp(f'<{timestamp_str}>')
-                words.append(LyricWord(timestamp, word_text))
+            if segment_text == "":
+                # This is most likely an end timestamp like <mm:ss.xx> immediately before
+                # the next word or end-of-line; attach to the previous word if present.
+                if last_word is not None:
+                    last_word.end_timestamp = ts
+                continue
+
+            # Normal case: this is a new word (text can include spaces we want to preserve)
+            w = LyricWord(ts, segment_text)
+            words.append(w)
+            last_word = w
 
         # Return the timestamp of the first word and all words
         first_timestamp = words[0].timestamp if words else 0.0
@@ -461,7 +473,7 @@ class MusicPlayer:
         formatted_parts = []
         current_word_index = -1
 
-        # Find the current word being sung
+    # Find the current word being sung
         for i, word in enumerate(lyric.words):
             if word.timestamp <= current_time:
                 current_word_index = i
@@ -478,14 +490,17 @@ class MusicPlayer:
                 # Compute dynamic duration using the gap to the next word; clamp to reasonable bounds
                 # to avoid flicker (too small) or sluggishness (too large).
                 min_dur, max_dur = 0.05, 2.5
-                if i + 1 < len(lyric.words):
+                # Prefer explicit end timestamp when available
+                raw_duration: float
+                if word.end_timestamp is not None:
+                    raw_duration = max(0.0, word.end_timestamp - word.timestamp)
+                elif i + 1 < len(lyric.words):
                     raw_duration = max(0.0, lyric.words[i + 1].timestamp - word.timestamp)
                 else:
-                    # Estimate last word duration
+                    # Last word: use next line start if provided, otherwise median inter-word gap or default
                     if next_line_timestamp is not None:
                         raw_duration = max(0.0, next_line_timestamp - word.timestamp)
                     else:
-                        # Fallback: median of existing inter-word gaps in this line, or 0.5
                         gaps = [
                             max(0.0, lyric.words[j + 1].timestamp - lyric.words[j].timestamp)
                             for j in range(len(lyric.words) - 1)
