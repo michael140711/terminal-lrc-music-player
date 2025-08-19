@@ -1,12 +1,12 @@
-r''' 
+r'''
 convert-from-apple-lrc.py — Convert Apple Music TTML/JSON to LRC (traditional or enhanced)
 
 Usage:
     # Convert from a file (Apple Music JSON, a snippet containing "ttml": "<tt...>", or raw TTML)
-    python .\convert-from-apple-lrc.py <input.json|xml|ttml> [output.lrc]
+    python .\convert-from-apple-lrc.py <input.json|xml|ttml> [output.lrc] [-mainonly]
 
     # Read from clipboard (expects Apple Music JSON or a ttml snippet)
-    python .\convert-from-apple-lrc.py -c [output.lrc]
+    python .\convert-from-apple-lrc.py -c [output.lrc] [-mainonly]
 
 Windows PowerShell notes:
 - Backslashes in paths are OK. PowerShell's escape character is the backtick (`), not the backslash.
@@ -14,13 +14,19 @@ Windows PowerShell notes:
 - You can also use forward slashes if you prefer: C:/Users/you/Music Files/sample.xml
 
 Examples:
-    python .\convert-from-apple-lrc.py "sample copy 2.xml" output_enhanced.lrc
+    python .\convert-from-apple-lrc.py "sample.xml" output_enhanced.lrc
+    python .\convert-from-apple-lrc.py "sample.xml" output_enhanced.lrc -mainonly
     python .\convert-from-apple-lrc.py -c "C:\Temp\output_enhanced.lrc"
+    python .\convert-from-apple-lrc.py -c
+    python .\convert-from-apple-lrc.py -c -mainonly
 
 Output behavior:
 - If the input indicates word timing (itunes:timing="Word" or spans per word), an enhanced LRC is produced.
 - If the input indicates line timing, a traditional LRC is produced.
 - Enhanced LRC lines include per-word timestamps like <mm:ss.cc>word, and a trailing end-time token is appended to capture the final word's unique end timing.
+
+Flags:
+- -mainonly: Exclude background/harmony spans (e.g., spans with ttm:role="x-bg"). This keeps only the main vocal line while still fixing timing artifacts.
 '''
 
 from pathlib import Path
@@ -132,7 +138,7 @@ def fmt_lrc_time(seconds: float) -> str:
     cs = total_centis % 100
     return f"{m:02d}:{s:02d}.{cs:02d}"
 
-def convert_ttml_string_to_elrc(ttml_xml: str, output_path: Path, display_type_hint: int | None = None, subtract_itunes_offset: bool=True):
+def convert_ttml_string_to_elrc(ttml_xml: str, output_path: Path, display_type_hint: int | None = None, subtract_itunes_offset: bool=True, main_only: bool=False):
     ns = {
         "tt": "http://www.w3.org/ns/ttml",
         "itunes": "http://music.apple.com/lyric-ttml-internal",
@@ -188,74 +194,113 @@ def convert_ttml_string_to_elrc(ttml_xml: str, output_path: Path, display_type_h
                 continue
             out_lines.append(f"[{fmt_lrc_time(line_time_adj)}] {text_content}")
         else:
-            # Enhanced word-by-word: preserve spaces exactly as in TTML.
-            # We build the line by walking direct children and keeping .text and .tail.
+            # Enhanced word-by-word: recursively walk spans, preserve spaces/tails, and optionally drop background spans.
             line_parts: list[str] = []
             first_span_sec = None
             last_span_end_sec = None
+            emitted_token = False
 
-            # Any leading text before the first child
+            def update_first_last(sb: str | None, se: str | None):
+                nonlocal first_span_sec, last_span_end_sec
+                if sb:
+                    sb_sec = parse_time_to_seconds(sb)
+                    if first_span_sec is None or sb_sec < first_span_sec:
+                        first_span_sec = sb_sec
+                if se:
+                    se_sec = parse_time_to_seconds(se)
+                    if last_span_end_sec is None or se_sec > last_span_end_sec:
+                        last_span_end_sec = se_sec
+
+            def walk(node):
+                # Generic walker: handle text, children, and tails.
+                nonlocal emitted_token
+                if node.tag == f"{{{ns['tt']}}}span":
+                    role = node.attrib.get(f"{{{ns['ttm']}}}role")
+                    is_bg = isinstance(role, str) and role.strip().lower().endswith("bg")
+                    if main_only and is_bg:
+                        # Skip this background subtree entirely
+                        return
+
+                    sb = node.attrib.get("begin")
+                    se = node.attrib.get("end")
+                    text = node.text or ""
+
+                    # Emit only if there's timing AND some text content
+                    if sb and text.strip():
+                        sb_sec = parse_time_to_seconds(sb)
+                        token_time = fmt_lrc_time(apply_offset(sb_sec))
+                        line_parts.append(f"<{token_time}>{text}")
+                        emitted_token = True
+                        update_first_last(sb, se)
+                    else:
+                        # No timing or empty text: just include text (if any) without a token
+                        if text:
+                            line_parts.append(text)
+
+                    # Recurse into children (to support nested spans like x-bg containers)
+                    for gc in list(node):
+                        walk(gc)
+                        if gc.tail:
+                            line_parts.append(gc.tail)
+                else:
+                    # Non-span node: include its text and descend
+                    if node.text:
+                        line_parts.append(node.text)
+                    for gc in list(node):
+                        walk(gc)
+                        if gc.tail:
+                            line_parts.append(gc.tail)
+
+            # Leading text before first child
             if p.text:
                 line_parts.append(p.text)
-
             for child in list(p):
-                # Only timestamp spans; copy other element text as plain text
-                if child.tag == f"{{{ns['tt']}}}span":
-                    sb = child.attrib.get("begin")
-                    se = child.attrib.get("end")
-                    sb_sec = parse_time_to_seconds(sb) if sb else (p_begin_sec or 0.0)
-                    if first_span_sec is None:
-                        first_span_sec = sb_sec
-                    if se:
-                        last_span_end_sec = parse_time_to_seconds(se)
-
-                    adj_sec = apply_offset(sb_sec)
-                    token_time = fmt_lrc_time(adj_sec)
-                    word_text = child.text or ""
-                    # Append token with its exact text (no trimming) to preserve intra-word splits
-                    line_parts.append(f"<{token_time}>{word_text}")
-                else:
-                    # Not a span: include its text content if any
-                    if child.text:
-                        line_parts.append(child.text)
-
-                # Preserve exact spacing or punctuation after the child
+                walk(child)
                 if child.tail:
                     line_parts.append(child.tail)
 
-            # If no spans were found, fallback to traditional line output
+            # If no per-word spans emitted, fallback to traditional line output with cleaned text
             if first_span_sec is None:
                 line_time_sec = p_begin_sec if p_begin_sec is not None else 0.0
                 line_time_adj = apply_offset(line_time_sec)
-                text_content = "".join(p.itertext()).strip()
+                # Use the accumulated line_parts which already exclude background when -mainonly
+                text_content = "".join(line_parts).strip()
+                if not text_content and not main_only:
+                    # As a fallback for non-mainonly, include full plain text
+                    text_content = "".join(p.itertext()).strip()
                 if text_content:
                     out_lines.append(f"[{fmt_lrc_time(line_time_adj)}] {text_content}")
+                continue
+
+            # If we didn't emit any tokens (e.g., all content was skipped due to -mainonly), drop this line entirely
+            if main_only and not emitted_token:
                 continue
 
             # Base timestamp for the line
             line_time_sec = p_begin_sec if p_begin_sec is not None else first_span_sec
             line_time_adj = apply_offset(line_time_sec)
 
-            # Append a trailing end-time token for the last word/line end if available
-            # Prefer the last span's end; otherwise fall back to p's end
+            # Determine trailing end token: prefer the line's p@end if available, else use last span end
             p_end_attr = p.attrib.get("end")
-            if last_span_end_sec is None and p_end_attr:
+            end_sec = None
+            if p_end_attr:
                 try:
-                    last_span_end_sec = parse_time_to_seconds(p_end_attr)
+                    end_sec = parse_time_to_seconds(p_end_attr)
                 except Exception:
-                    last_span_end_sec = None
-
-            if last_span_end_sec is not None:
-                end_adj = apply_offset(last_span_end_sec)
+                    end_sec = None
+            if end_sec is None:
+                end_sec = last_span_end_sec
+            if end_sec is not None:
+                end_adj = apply_offset(end_sec)
                 line_parts.append(f"<{fmt_lrc_time(end_adj)}>")
 
             out_lines.append(f"[{fmt_lrc_time(line_time_adj)}] " + "".join(line_parts))
 
     output_path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
 
-def convert_ttml_to_elrc(input_path: Path, output_path: Path, subtract_itunes_offset: bool=True):
+def convert_ttml_to_elrc(input_path: Path, output_path: Path, subtract_itunes_offset: bool=True, main_only: bool=False):
     ttml_xml, display_type_hint = coerce_to_ttml_input(input_path)
-    convert_ttml_string_to_elrc(ttml_xml, output_path, display_type_hint, subtract_itunes_offset=subtract_itunes_offset)
+    convert_ttml_string_to_elrc(ttml_xml, output_path, display_type_hint, subtract_itunes_offset=subtract_itunes_offset, main_only=main_only)
 
 def _read_clipboard_text() -> str:
     """Return current clipboard text. Prefers PowerShell on Windows; falls back to Tk, pbpaste, or xclip."""
@@ -299,12 +344,18 @@ if __name__ == "__main__":
     #   python convert-from-apple-lrc.py <input.json|xml|ttml> [output.lrc]
     #   python convert-from-apple-lrc.py -c [output.lrc]       # read from clipboard
     args = sys.argv[1:]
+    # Simple arg parsing supporting: -c [out], file [out], and optional -mainonly anywhere
+    main_only = False
+    if "-mainonly" in args:
+        main_only = True
+        args = [a for a in args if a != "-mainonly"]
+
     if args and args[0] in ("-c", "--clipboard"):
         raw = _read_clipboard_text()
         ttml_xml, dt_hint = coerce_raw_to_ttml_input(raw.strip())
         default_out = "output_enhanced.lrc" if dt_hint == 3 else "output_traditional.lrc" if dt_hint == 2 else "output_enhanced.lrc"
         out_path = Path(args[1]) if len(args) > 1 else Path(default_out)
-        convert_ttml_string_to_elrc(ttml_xml, out_path, dt_hint)
+        convert_ttml_string_to_elrc(ttml_xml, out_path, dt_hint, main_only=main_only)
         print("Wrote", out_path)
     else:
         in_path = Path(args[0]) if args else Path("sample.xml")
@@ -315,5 +366,5 @@ if __name__ == "__main__":
             dt_hint = None
         default_out = "output_enhanced.lrc" if dt_hint == 3 else "output_traditional.lrc" if dt_hint == 2 else "output_enhanced.lrc"
         out_path = Path(args[1]) if len(args) > 1 else Path(default_out)
-        convert_ttml_to_elrc(in_path, out_path)
+        convert_ttml_to_elrc(in_path, out_path, main_only=main_only)
         print("Wrote", out_path)
