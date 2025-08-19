@@ -1,10 +1,7 @@
 """
-lrc-player3.5.1 8/18/2025 10:26 AM
-Added seek support- it's a bit buggy where tapping mulitple times can cause it to crash or to next song.
-Updated the time to 2 decimal places for easier lyc file for word-by-word time/lyrics fixing.
 """
 
-version = "3.5.1"
+version = "3.5.3"
 author = "Michael"
 
 import os
@@ -166,9 +163,17 @@ class MusicPlayer:
         self.pause_start_time = 0
         self.total_pause_time = 0
         self.seek_offset = 0  # Track seeking offset in seconds
+        # Guard against false end-of-song detection when seeking
+        self.seek_guard_until = 0.0
+        # Serialize seek operations to avoid race conditions with the UI loop
+        self._seek_lock = threading.Lock()
         self.navigation_action = None  # Track navigation actions: 'next', 'previous', 'quit'
         self.quit_confirmation_time = 0  # Track quit confirmation timing
         self.quit_message_displayed = False  # Track if quit message is being shown
+        # Cache for song durations to avoid repeated probing
+        self._duration_cache = {}
+        # Timestamp of last successful seek to differentiate real end vs. transient stop
+        self.last_seek_at = 0.0
 
         # Initialize pygame mixer
         pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
@@ -502,42 +507,86 @@ class MusicPlayer:
 
     def seek_audio(self, seconds: float):
         """Seek forward or backward by the specified number of seconds"""
-        try:
-            # Calculate current position before seeking
-            current_position = self.get_playback_position()
+        with self._seek_lock:
+            try:
+                # Calculate current position before seeking
+                current_position = self.get_playback_position()
 
-            # Calculate target position
-            target_position = current_position + seconds
+                # Calculate target position
+                target_position = current_position + seconds
 
-            # Ensure we don't seek to negative time
-            if target_position < 0:
-                target_position = 0
+                # Ensure we don't seek to negative time
+                if target_position < 0:
+                    target_position = 0.0
 
-            # Get current song path
-            current_song = self.playlist[self.current_song_index]
+                # Clamp seeks to at most 2 seconds before song end when we know duration
+                try:
+                    current_song = self.playlist[self.current_song_index]
+                except Exception:
+                    current_song = None
+                if current_song is not None:
+                    duration = self.get_song_duration(current_song)
+                    if duration is not None:
+                        max_end = max(0.0, float(duration) - 2.0)
+                        if target_position > max_end:
+                            target_position = max_end
 
-            # Stop current playback
-            pygame.mixer.music.stop()
+                # Remember pause state
+                was_paused = self.is_paused
 
-            # Reload and start from new position
-            pygame.mixer.music.load(str(current_song))
-            pygame.mixer.music.play(start=target_position)
+                # Prefer using set_pos without stopping (more stable across formats)
+                try:
+                    pygame.mixer.music.set_pos(float(target_position))
 
-            # Reset timing variables to reflect the new position
-            current_time = time.time()
-            self.start_time = current_time - target_position
-            self.total_pause_time = 0
-            self.seek_offset = 0  # Reset seek offset since we're starting fresh
+                    # Adjust our time accounting to align lyrics with audio
+                    now = time.time()
+                    self.start_time = now - target_position
+                    self.total_pause_time = 0
+                    self.seek_offset = 0
+                    if was_paused:
+                        self.pause_start_time = now
+                        # Ensure playback stays paused
+                        pygame.mixer.music.pause()
 
-            # If we were paused, update pause start time
-            if self.is_paused:
-                self.pause_start_time = current_time
-                pygame.mixer.music.pause()
+                    # Short guard to ignore transient get_busy glitches
+                    self.seek_guard_until = time.time() + 0.6
+                    self.last_seek_at = time.time()
+                    return
+                except Exception:
+                    # set_pos not supported; fall back to reload+play(start)
+                    pass
 
-        except Exception as e:
-            print(f"Error seeking: {e}")
-            # Reset all timing on error
-            self.seek_offset = 0
+                # Fallback path: reload the track and start at position
+                try:
+                    current_song = self.playlist[self.current_song_index]
+                    # Begin guard window before any stop to avoid race with UI loop
+                    self.seek_guard_until = time.time() + 0.8
+                    pygame.mixer.music.stop()
+                    pygame.mixer.music.load(str(current_song))
+                    pygame.mixer.music.play(loops=0, start=float(target_position))
+
+                    now = time.time()
+                    self.start_time = now - target_position
+                    self.total_pause_time = 0
+                    self.seek_offset = 0
+                    if was_paused:
+                        self.pause_start_time = now
+                        pygame.mixer.music.pause()
+                    self.last_seek_at = time.time()
+                    return
+                except Exception:
+                    # Seeking is not supported for this file/codec; keep playback as-is
+                    # Provide a gentle one-shot message without killing playback
+                    self.show_message("Seek not supported for this file format")
+                    # Short guard anyway to avoid immediate false end detection
+                    self.seek_guard_until = time.time() + 0.4
+                    return
+
+            except Exception as e:
+                # Swallow any unexpected errors to keep the player responsive
+                print(f"Error seeking: {e}")
+                self.seek_guard_until = time.time() + 0.4
+                return
 
     def display_player_info(self, song_path: Path):
         """Display current song info and controls"""
@@ -660,10 +709,38 @@ class MusicPlayer:
                     last_pause_state = self.is_paused
                     last_display_time = current_time
 
-                # Check if song finished
-                if not pygame.mixer.music.get_busy() and not self.is_paused:
-                    self.is_playing = False  # Mark as finished naturally
-                    break
+                # Check if song finished, but try to auto-resume spurious stops (esp. after seeks)
+                if not self.is_paused and time.time() >= self.seek_guard_until:
+                    if not pygame.mixer.music.get_busy():
+                        # If we recently sought or we're not near the end, attempt to resume
+                        try:
+                            duration = self.get_song_duration(song_path)
+                        except Exception:
+                            duration = None
+
+                        now_pos = self.get_playback_position()
+                        near_end = False
+                        if duration is not None:
+                            near_end = now_pos >= (float(duration) - 1.9)
+
+                        if (time.time() - getattr(self, 'last_seek_at', 0.0) <= 0.8) or (duration is not None and not near_end):
+                            # Nudge playback to current position and extend guard
+                            try:
+                                try:
+                                    pygame.mixer.music.set_pos(float(now_pos))
+                                except Exception:
+                                    pygame.mixer.music.stop()
+                                    pygame.mixer.music.load(str(song_path))
+                                    pygame.mixer.music.play(loops=0, start=float(now_pos))
+                                self.seek_guard_until = time.time() + 0.6
+                                continue
+                            except Exception:
+                                # If resume fails, fall through to end handling when truly ended
+                                pass
+
+                        # Consider this a real end
+                        self.is_playing = False
+                        break
 
                 time.sleep(0.05)  # Check every 50ms for smooth animation
 
@@ -682,7 +759,10 @@ class MusicPlayer:
 
                     # Check if this is a special key (arrow keys, function keys, etc.)
                     if first_byte in (b'\x00', b'\xe0'):
-                        # This is a special key, read the second byte
+                        # Ensure the second byte is available to avoid blocking getch()
+                        if not msvcrt.kbhit():
+                            # Skip this cycle; the second byte will arrive shortly
+                            continue
                         second_byte = msvcrt.getch()
 
                         # Handle arrow keys
@@ -756,6 +836,41 @@ class MusicPlayer:
             time.sleep(0.05)
 
         return True
+
+    def get_song_duration(self, song_path: Path) -> Optional[float]:
+        """Get duration of the given audio file in seconds. Caches results.
+
+        Tries pygame.mixer.Sound first (may load audio into memory), then
+        falls back to mutagen if available. Returns None if unknown.
+        """
+        # Use cache if present
+        key = str(song_path)
+        if key in self._duration_cache:
+            return self._duration_cache[key]
+
+        length: Optional[float] = None
+
+        # Attempt via pygame Sound
+        try:
+            snd = pygame.mixer.Sound(key)
+            length = float(snd.get_length())
+            del snd
+        except Exception:
+            length = None
+
+        # Fallback to mutagen
+        if length is None:
+            try:
+                import mutagen  # type: ignore
+                audio = mutagen.File(key)
+                if audio is not None and hasattr(audio, 'info') and hasattr(audio.info, 'length'):
+                    length = float(audio.info.length)  # type: ignore[attr-defined]
+            except Exception:
+                length = None
+
+        # Cache (including None) to avoid repeated heavy work
+        self._duration_cache[key] = length
+        return length
 
     def play_all(self):
         """Play all songs in the playlist"""
