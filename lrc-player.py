@@ -592,9 +592,10 @@ class MusicPlayer:
         if word_duration <= 0:
             word_duration = 0.5
 
-        # Shrink the word duration when the duration is way too long, using a curve to scale it down
+        # 指数衰减曲线/指数饱和函数 Shrink the word duration when the duration is way too long, using a curve to scale it down
+        # https://asset-cdn.uscardforum.com/original/4X/3/d/9/3d9d969d8f021d34ad5cf32a21b6f1439ec9118c.png
         L = 2.0 # max duration for compression
-        Curve = 0.95  # Compression factor
+        Curve = 0.85  # Compression factor
         compressed = L * (1 - math.exp(-word_duration / L * Curve))
         word_duration = min(word_duration, compressed)
         word_duration = max(0.05, word_duration)  # Ensure minimum duration
