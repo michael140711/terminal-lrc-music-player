@@ -1,8 +1,8 @@
 """
-lrc-player 8/18/2025 5:18 PM
+lrc-player
 """
 
-version = "3.6.5"
+version = "3.7.0"
 author = "Michael"
 
 import os
@@ -185,6 +185,14 @@ class MusicPlayer:
         self.navigation_action = None  # 'next' | 'previous' | 'quit' | None
         self.quit_confirmation_time = 0.0
         self.quit_message_displayed = False
+        # lyrics candidates for current track and selected index
+        self.current_lyric_candidates = []
+        self.current_lyric_choice_index = 0
+        self.current_lrc_path = None
+        # transient header notification (e.g., Displaying: file.lrc)
+        self.header_notification = ""
+        self.header_notification_until = 0.0
+        self.header_notification_color = None
 
         # Initialize pygame mixer
         pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
@@ -245,6 +253,47 @@ class MusicPlayer:
                 best_match = lrc_file
 
         return best_match
+
+    def find_all_lyrics_matches(self, song_stem: str) -> List[Path]:
+        """Return all matching LRC files (exact and partial) ordered by relevance.
+
+        Order: exact match first (if any), then partial matches by score desc.
+        """
+        if not self.songs_dir.exists():
+            return []
+
+        lrc_files = list(self.songs_dir.glob("*.lrc"))
+        if not lrc_files:
+            return []
+
+        normalized_song = self.normalize_filename(song_stem)
+
+        exact_matches: List[Path] = []
+        partials: List[Tuple[Path, float]] = []
+
+        for lrc_file in lrc_files:
+            lrc_stem = lrc_file.stem
+            if lrc_stem == song_stem:
+                exact_matches.append(lrc_file)
+                continue
+
+            normalized_lrc = self.normalize_filename(lrc_stem)
+            score = self.calculate_match_score(normalized_song, normalized_lrc)
+            if score >= 0.7:
+                partials.append((lrc_file, score))
+
+        # Sort partials by score desc, then by filename for stability
+        partials.sort(key=lambda x: (-x[1], x[0].name))
+        ordered = exact_matches + [p[0] for p in partials]
+
+        # De-duplicate while preserving order
+        seen = set()
+        unique_ordered = []
+        for p in ordered:
+            if p not in seen:
+                seen.add(p)
+                unique_ordered.append(p)
+        return unique_ordered
 
     def normalize_filename(self, filename: str) -> str:
         """Normalize filename for better matching"""
@@ -335,6 +384,15 @@ class MusicPlayer:
 
         print(f"No lyrics found for: {song_path.name}")
         return []
+
+    def load_lyrics_from_file(self, lrc_path: Path, *, verbose: bool = True) -> List[LyricLine]:
+        """Load lyrics from a specific LRC file path."""
+        lyrics = LRCParser.parse_lrc_file(lrc_path)
+        if lyrics and verbose:
+            precise_count = sum(1 for lyric in lyrics if lyric.is_precise)
+            if precise_count > 0:
+                print(f"Detected precise LRC with word-by-word timing ({precise_count} lines)")
+        return lyrics
 
     def clear_screen(self):
         """Clear the terminal screen"""
@@ -678,12 +736,35 @@ class MusicPlayer:
 
         status = "⏸️  PAUSED " if self.is_paused else "▶️  PLAYING"
 
+        # Determine header line: temporary notification if active
+        now = time.time()
+        if self.header_notification and now < self.header_notification_until:
+            color = self.header_notification_color or Fore.GREEN
+            header_line = f"{color}{self.header_notification}{Style.RESET_ALL}"
+        else:
+            header_line = f"{Fore.GREEN}Version: {version} | Author: {author}{Style.RESET_ALL}"
+            # Clear expired notification
+            if self.header_notification and now >= self.header_notification_until:
+                self.header_notification = ""
+                self.header_notification_until = 0.0
+                self.header_notification_color = None
+
+        # LRC position indicator
+        if self.current_lyric_candidates:
+            lrc_pos = self.current_lyric_choice_index + 1
+            lrc_total = len(self.current_lyric_candidates)
+        elif self.current_lyrics:
+            lrc_pos = 1
+            lrc_total = 1
+        else:
+            lrc_pos = 0
+            lrc_total = 0
+
         info_lines = [
             f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}",
-            f"{Fore.GREEN}Version: {version} | Author: {author}{Style.RESET_ALL}",
+            header_line,
             f"{Fore.YELLOW}🎵 Now Playing: {song_name}{Style.RESET_ALL}",
-            # f"{Fore.BLUE}📀 Track {self.current_song_index + 1} of {len(self.playlist)}{Style.RESET_ALL}",
-            f"{Fore.MAGENTA}{status} |{Fore.BLUE}📀 Track {self.current_song_index + 1} of {len(self.playlist)} | Time: {current_min:02d}:{current_sec:05.2f}{Style.RESET_ALL}",
+            f"{Fore.MAGENTA}{status} |{Fore.BLUE}📀 Track {self.current_song_index + 1} of {len(self.playlist)} | Lrc {lrc_pos} of {lrc_total} | Time: {current_min:02d}:{current_sec:05.2f}{Style.RESET_ALL}",
             f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}",
             "",
         ]
@@ -693,25 +774,14 @@ class MusicPlayer:
     def display_controls(self):
         """Display control instructions"""
         # Check if we should show quit confirmation message
-        if self.quit_confirmation_time > 0:
-            if time.time() - self.quit_confirmation_time <= 3.0:
-                # Show quit confirmation message
-                controls = [
-                    "",
-                    f"{Fore.WHITE}{'─'*60}{Style.RESET_ALL}",
-                    f"{Fore.RED}Press 'Q' again to quit (within 3 seconds){Style.RESET_ALL}",
-                    f"{Fore.WHITE}{'─'*60}{Style.RESET_ALL}",
-                ]
-                return controls
-            else:
-                # Timeout reached, reset quit confirmation
-                self.quit_confirmation_time = 0
-                self.quit_message_displayed = False
+        # Reset confirmation if expired
+        if self.quit_confirmation_time > 0 and time.time() - self.quit_confirmation_time > 3.0:
+            self.quit_confirmation_time = 0
+            self.quit_message_displayed = False
 
         # Normal controls display
         controls = [
             "",
-            # UNCOMMENT THIS TO SHOW CONTROLS
             f"{Fore.WHITE}{'─'*60}{Style.RESET_ALL}",
             f"{Fore.CYAN} [SPACE] Pause | [N] Next | [P] Previous | [←/→] Seek | [Q] Quit{Style.RESET_ALL}",
             f"{Fore.WHITE}{'─'*60}{Style.RESET_ALL}",
@@ -726,8 +796,22 @@ class MusicPlayer:
             # Load the song
             pygame.mixer.music.load(str(song_path))
 
-            # Load lyrics
-            self.current_lyrics = self.load_lyrics(song_path)
+            # Discover all matching lyrics and load the initial one
+            self.current_lyric_candidates = self.find_all_lyrics_matches(song_path.stem)
+            self.current_lyric_choice_index = 0
+            if self.current_lyric_candidates:
+                self.current_lrc_path = self.current_lyric_candidates[self.current_lyric_choice_index]
+                self.current_lyrics = self.load_lyrics_from_file(self.current_lrc_path, verbose=True)
+                # show header notification for 3 seconds
+                try:
+                    self.header_notification = f"Displaying: {self.current_lrc_path.name}"
+                    self.header_notification_until = time.time() + 3.0
+                    self.header_notification_color = Fore.GREEN
+                except Exception:
+                    pass
+            else:
+                # Fallback to legacy behavior (may find one via custom logic)
+                self.current_lyrics = self.load_lyrics(song_path)
             print(f"Loaded {len(self.current_lyrics)} lyric lines")
 
             # Start playing
@@ -884,6 +968,26 @@ class MusicPlayer:
                         pygame.mixer.music.stop()
                     continue
 
+                if key == 'v':  # Switch to next lyrics file (cycle)
+                    try:
+                        if self.current_lyric_candidates:
+                            self.current_lyric_choice_index = (
+                                (self.current_lyric_choice_index + 1) % len(self.current_lyric_candidates)
+                            )
+                            new_path = self.current_lyric_candidates[self.current_lyric_choice_index]
+                            new_lyrics = self.load_lyrics_from_file(new_path, verbose=False)
+                            if new_lyrics:
+                                self.current_lyrics = new_lyrics
+                                self.current_lrc_path = new_path
+                                # header notification for 3 seconds
+                                self.header_notification = f"Displaying: {new_path.name}"
+                                self.header_notification_until = time.time() + 3.0
+                                self.header_notification_color = Fore.GREEN
+                    except Exception:
+                        # Stay silent per requirement; ignore switching errors
+                        pass
+                    continue
+
                 if key == 'q':  # Quit with confirmation
                     if self.quit_confirmation_time > 0 and time.time() - self.quit_confirmation_time <= 3.0:
                         self.navigation_action = 'quit'
@@ -893,6 +997,10 @@ class MusicPlayer:
                     else:
                         self.quit_confirmation_time = time.time()
                         self.quit_message_displayed = True
+                        # Show quit confirmation in header for 3 seconds, in red
+                        self.header_notification = "Press 'Q' again to quit (within 3 seconds)"
+                        self.header_notification_until = time.time() + 3.0
+                        self.header_notification_color = Fore.RED
                     continue
 
                 # Ignore anything else
