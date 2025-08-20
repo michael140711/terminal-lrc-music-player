@@ -14,7 +14,8 @@ LYRIC_API = "https://amp-api.music.apple.com/v1/catalog/us/songs/{}/syllable-lyr
 
 CSV_FILE = Path("playlist.csv")
 LYRICS_DIR = Path("lyrics")
-DELAY_SECONDS = random.randint(3, 20)
+DELAY_SECONDS_MIN = 3
+DELAY_SECONDS_MAX = 20
 
 STATE_FILE = Path("state.json")
 use_persistent_context = False
@@ -160,7 +161,7 @@ async def main() -> None:
             except Exception as e:
                 print("Error processing row:", row)
                 print(e)
-            await asyncio.sleep(DELAY_SECONDS)
+            await asyncio.sleep(random.randint(DELAY_SECONDS_MIN, DELAY_SECONDS_MAX))
 
         if not use_persistent_context:
             await browser.close()
