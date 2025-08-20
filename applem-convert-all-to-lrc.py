@@ -39,7 +39,7 @@ def load_cfg() -> dict:
 		except Exception:
 			pass
 	# default: Only Full Lyrics
-	return {"mode": "full", "disable_non_dt3": False}  # one of: main, both, full
+	return {"mode": "full", "disable_non_dt3": False, "filter_duplicates": False, "replace_censored_stars": False}  # one of: main, both, full
 
 
 def save_cfg(cfg: dict) -> None:
@@ -120,6 +120,10 @@ def run_settings(cfg: dict) -> None:
 		print(f"1. Toggle - {mode_label(cfg.get('mode', 'full'))}")
 		dn3 = cfg.get("disable_non_dt3", False)
 		print(f"2. Disable ALL Non (DisplayType=3) when loading: {'ON' if dn3 else 'OFF'}")
+		fd = cfg.get("filter_duplicates", False)
+		print(f"3. Filter Duplicates when 'Both' mode: {'ON' if fd else 'OFF'} (delete non-main if identical)")
+		rcs = cfg.get("replace_censored_stars", False)
+		print(f"4. Replace censored stars to 🥷 : {'ON' if rcs else 'OFF'}")
 		print("---")
 		print("0. Back")
 		choice = input("> ").strip()
@@ -130,6 +134,12 @@ def run_settings(cfg: dict) -> None:
 			save_cfg(cfg)
 		elif choice == "2":
 			cfg["disable_non_dt3"] = not cfg.get("disable_non_dt3", False)
+			save_cfg(cfg)
+		elif choice == "3":
+			cfg["filter_duplicates"] = not cfg.get("filter_duplicates", False)
+			save_cfg(cfg)
+		elif choice == "4":
+			cfg["replace_censored_stars"] = not cfg.get("replace_censored_stars", False)
 			save_cfg(cfg)
 		else:
 			print("Unknown option. Use 1 to toggle mode, or 0 to go back.")
@@ -155,20 +165,68 @@ def output_names_for(p: Path, mode: str) -> list[tuple[Path, bool]]:
 	return [(SONGS_DIR / f"{stem}.lrc", False)]
 
 
-def convert_selected(files: list[Path], on_mask: list[bool], mode: str) -> None:
+def _postprocess_output(path: Path, replace_censored_stars: bool) -> None:
+	try:
+		if replace_censored_stars and path.exists():
+			txt = path.read_text(encoding="utf-8")
+			new_txt = txt.replace("****", "🥷 ")
+			if new_txt != txt:
+				path.write_text(new_txt, encoding="utf-8")
+	except Exception as e:
+		print(f"{YELLOW}Post-process failed for {path.name}: {e}{RESET}")
+
+
+def convert_selected(files: list[Path], on_mask: list[bool], mode: str, filter_duplicates: bool = False, replace_censored_stars: bool = False) -> None:
 	total = 0
 	ok = 0
 	for p, on in zip(files, on_mask):
 		if not on:
 			continue
-		for out_path, main_only in output_names_for(p, mode):
-			total += 1
+		# If in 'both' mode and filtering duplicates, handle pair together
+		if mode == "both" and filter_duplicates:
+			outputs = output_names_for(p, mode)
+			results: list[tuple[Path, bool, bool]] = []  # (path, is_main, success)
+			for out_path, main_only in outputs:
+				total += 1
+				try:
+					convert_ttml_to_elrc(p, out_path, main_only=main_only)
+					# post-processing replacement if enabled
+					_postprocess_output(out_path, replace_censored_stars)
+					print(f"Wrote {out_path}")
+					ok += 1
+					results.append((out_path, main_only, True))
+				except Exception as e:
+					print(f"{RED}Failed to convert {p.name} → {out_path.name}: {e}{RESET}")
+					results.append((out_path, main_only, False))
+
+			# If both succeeded, compare contents and delete non-main if identical
 			try:
-				convert_ttml_to_elrc(p, out_path, main_only=main_only)
-				print(f"Wrote {out_path}")
-				ok += 1
-			except Exception as e:
-				print(f"{RED}Failed to convert {p.name} → {out_path.name}: {e}{RESET}")
+				main_entry = next((r for r in results if r[1] is True), None)
+				full_entry = next((r for r in results if r[1] is False), None)
+				if main_entry and full_entry and main_entry[2] and full_entry[2]:
+					main_path = main_entry[0]
+					full_path = full_entry[0]
+					if main_path.exists() and full_path.exists():
+						if main_path.read_bytes() == full_path.read_bytes():
+							# identical; keep main only
+							try:
+								full_path.unlink()
+								print(f"{YELLOW}Duplicate content detected for '{p.name}'. Kept main only; deleted {full_path.name}.{RESET}")
+							except Exception as del_err:
+								print(f"{RED}Tried to delete duplicate file {full_path.name} but failed: {del_err}{RESET}")
+			except Exception as cmp_err:
+				print(f"{RED}Comparison failed for '{p.name}': {cmp_err}{RESET}")
+		else:
+			for out_path, main_only in output_names_for(p, mode):
+				total += 1
+				try:
+					convert_ttml_to_elrc(p, out_path, main_only=main_only)
+					# post-processing replacement if enabled
+					_postprocess_output(out_path, replace_censored_stars)
+					print(f"Wrote {out_path}")
+					ok += 1
+				except Exception as e:
+					print(f"{RED}Failed to convert {p.name} → {out_path.name}: {e}{RESET}")
 	print()
 	print(f"Done: {ok}/{total} successful.")
 
@@ -214,7 +272,13 @@ def main() -> None:
 			if idx == run_idx:
 				# Run conversions
 				clear_console()
-				convert_selected(files, on_mask, cfg.get("mode", "full"))
+				convert_selected(
+					files,
+					on_mask,
+					cfg.get("mode", "full"),
+					cfg.get("filter_duplicates", False),
+					cfg.get("replace_censored_stars", False),
+				)
 				break
 			if 1 <= idx <= len(files):
 				i = idx - 1
