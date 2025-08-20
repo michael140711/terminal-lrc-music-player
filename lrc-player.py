@@ -495,11 +495,6 @@ class MusicPlayer:
                     if current_index + 1 < len(self.current_lyrics):
                         next_line_timestamp = self.current_lyrics[current_index + 1].timestamp
 
-                    # michael: new logic to switch lines right after the current line ends  # michael-todo remove this
-                    # if LYRICS_LINE_SWITCHING_ON_END and lyric.words[-1].end_timestamp is not None and \
-                    #         next_line_timestamp is not None and lyric.words[-1].end_timestamp + 1.0 < next_line_timestamp:
-                    #     next_line_timestamp = lyric.words[-1].end_timestamp + 1.0
-
                     line_text = self.format_precise_lyric_line(lyric, current_time, next_line_timestamp)
                     line = f"♪ {line_text}"
                 else:
