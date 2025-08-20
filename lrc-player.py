@@ -1,10 +1,8 @@
 """
-lrc-player3.5.1 8/18/2025 10:26 AM
-Added seek support- it's a bit buggy where tapping mulitple times can cause it to crash or to next song.
-Updated the time to 2 decimal places for easier lyc file for word-by-word time/lyrics fixing.
+lrc-player 8/18/2025 5:18 PM
 """
 
-version = "3.5.1"
+version = "3.6.5"
 author = "Michael"
 
 import os
@@ -15,6 +13,7 @@ from pathlib import Path
 import re
 from typing import List, Tuple, Optional
 import msvcrt  # Windows-specific for keyboard input
+import math  # <-- add this
 
 try:
     import pygame
@@ -41,9 +40,11 @@ SONGS_DIRNAME = "songs"
 
 
 class LyricWord:
-    def __init__(self, timestamp: float, text: str):
+    def __init__(self, timestamp: float, text: str, end_timestamp: Optional[float] = None):
         self.timestamp = timestamp
         self.text = text
+        # Optional explicit end time for this word (e.g., <start>word<end>)
+        self.end_timestamp = end_timestamp
 
     def __repr__(self):
         return f"LyricWord({self.timestamp:.3f}, '{self.text}')"
@@ -83,19 +84,29 @@ class LRCParser:
     @staticmethod
     def parse_precise_lrc_line(line: str) -> Tuple[float, List[LyricWord]]:
         """Parse a precise LRC line with word-by-word timing"""
-        words = []
+        words: List[LyricWord] = []
 
-        # Pattern to match word timing: <timestamp>word_or_space
-        word_pattern = r'<(\d{2}:\d{2}\.\d{2})>([^<]*?)(?=<|$)'
+        # Pattern to match any tag and the text until the next tag or end-of-line.
+        # If the text is empty, we treat this as a closing tag for the previous word's end.
+        word_pattern = r'<(\d{2}:\d{2}\.\d{2,3})>([^<]*?)(?=<|$)'
 
+        last_word: Optional[LyricWord] = None
         for match in re.finditer(word_pattern, line):
             timestamp_str = match.group(1)
-            word_text = match.group(2)
+            segment_text = match.group(2)
+            ts = LRCParser.parse_timestamp(f'<{timestamp_str}>')
 
-            # Don't strip spaces - preserve them for proper display
-            if word_text:  # Only skip completely empty matches
-                timestamp = LRCParser.parse_timestamp(f'<{timestamp_str}>')
-                words.append(LyricWord(timestamp, word_text))
+            if segment_text == "":
+                # This is most likely an end timestamp like <mm:ss.xx> immediately before
+                # the next word or end-of-line; attach to the previous word if present.
+                if last_word is not None:
+                    last_word.end_timestamp = ts
+                continue
+
+            # Normal case: this is a new word (text can include spaces we want to preserve)
+            w = LyricWord(ts, segment_text)
+            words.append(w)
+            last_word = w
 
         # Return the timestamp of the first word and all words
         first_timestamp = words[0].timestamp if words else 0.0
@@ -420,7 +431,11 @@ class MusicPlayer:
             if i == current_index:
                 # Current line - handle word-by-word highlighting for precise LRC
                 if lyric.is_precise and lyric.words:
-                    line_text = self.format_precise_lyric_line(lyric, current_time)
+                    # Provide the next line timestamp to refine last-word duration
+                    next_line_timestamp = None
+                    if current_index + 1 < len(self.current_lyrics):
+                        next_line_timestamp = self.current_lyrics[current_index + 1].timestamp
+                    line_text = self.format_precise_lyric_line(lyric, current_time, next_line_timestamp)
                     line = f"♪ {line_text}"
                 else:
                     # Standard highlighting for non-precise lines - use white instead of background
@@ -445,15 +460,20 @@ class MusicPlayer:
 
         return lyrics_display
 
-    def format_precise_lyric_line(self, lyric: LyricLine, current_time: float) -> str:
-        """Format a precise lyric line with smooth color transitions and character-by-character animation"""
+    def format_precise_lyric_line(self, lyric: LyricLine, current_time: float, next_line_timestamp: Optional[float] = None) -> str:
+        """Format a precise lyric line with smooth color transitions and character-by-character animation.
+
+        Duration of the active word is derived from the timestamp gap to the next word. For the last
+        word in the line, we use either the next line's timestamp (if provided) or fall back to the
+        median gap of the line (and finally a small default) to keep animation smooth.
+        """
         if not lyric.words:
             return f"{Fore.WHITE}{lyric.text}{Style.RESET_ALL}"
 
         formatted_parts = []
         current_word_index = -1
 
-        # Find the current word being sung
+    # Find the current word being sung
         for i, word in enumerate(lyric.words):
             if word.timestamp <= current_time:
                 current_word_index = i
@@ -467,7 +487,36 @@ class MusicPlayer:
                 formatted_parts.append(f"{Fore.WHITE}{word.text}{Style.RESET_ALL}")
             elif i == current_word_index:
                 # Currently singing word - animate character by character
-                animated_word = self.animate_word_reveal(word, current_time)
+                # Compute dynamic duration using the gap to the next word; clamp to reasonable bounds
+                # to avoid flicker (too small) or sluggishness (too large).
+                min_dur, max_dur = 0.05, 2.5
+                # Prefer explicit end timestamp when available
+                raw_duration: float
+                if word.end_timestamp is not None:
+                    raw_duration = max(0.0, word.end_timestamp - word.timestamp)
+                elif i + 1 < len(lyric.words):
+                    raw_duration = max(0.0, lyric.words[i + 1].timestamp - word.timestamp)
+                else:
+                    # Last word: use next line start if provided, otherwise median inter-word gap or default
+                    if next_line_timestamp is not None:
+                        raw_duration = max(0.0, next_line_timestamp - word.timestamp)
+                    else:
+                        gaps = [
+                            max(0.0, lyric.words[j + 1].timestamp - lyric.words[j].timestamp)
+                            for j in range(len(lyric.words) - 1)
+                        ]
+                        if gaps:
+                            sorted_gaps = sorted(gaps)
+                            mid = len(sorted_gaps) // 2
+                            raw_duration = (
+                                (sorted_gaps[mid] if len(sorted_gaps) % 2 == 1 else
+                                 (sorted_gaps[mid - 1] + sorted_gaps[mid]) / 2.0)
+                            )
+                        else:
+                            raw_duration = 0.5
+
+                duration = max(min_dur, min(max_dur, raw_duration if raw_duration > 0 else 0.5))
+                animated_word = self.animate_word_reveal(word, current_time, duration)
                 formatted_parts.append(animated_word)
             else:
                 # Future words - blue
@@ -475,9 +524,23 @@ class MusicPlayer:
 
         return "".join(formatted_parts)
 
-    def animate_word_reveal(self, word: LyricWord, current_time: float) -> str:
-        """Create character-by-character reveal animation for current word"""
-        word_duration = 0.5  # Assume each word takes 0.5 seconds to fully reveal
+    def animate_word_reveal(self, word: LyricWord, current_time: float, duration: Optional[float] = None) -> str:
+        """Create character-by-character reveal animation for current word.
+
+        duration: The computed duration for revealing this word. If None, defaults to 0.5s.
+        """
+        word_duration = duration if duration is not None else 0.5
+        # Protect against zero/negative durations
+        if word_duration <= 0:
+            word_duration = 0.5
+
+        # Shrink the word duration when the duration is way too long, using a curve to scale it down
+        L = 2.0 # max duration for compression
+        Curve = 0.95  # Compression factor
+        compressed = L * (1 - math.exp(-word_duration / L * Curve))
+        word_duration = min(word_duration, compressed)
+        word_duration = max(0.05, word_duration)  # Ensure minimum duration
+
         word_progress = min(1.0, max(0.0, (current_time - word.timestamp) / word_duration))
 
         # Calculate how many characters should be revealed
