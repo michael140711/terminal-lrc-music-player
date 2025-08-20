@@ -2,7 +2,7 @@
 lrc-player
 """
 
-version = "3.7.0"
+version = "3.8.0.2-alpha"
 author = "Michael"
 
 import os
@@ -36,6 +36,7 @@ except ImportError:
 
 CFG_FILENAME = "player-temp.cfg"
 SONGS_DIRNAME = "songs"
+LYRICS_LINE_SWITCHING_ON_END = True # Whether to switch to next line when the current line ends
 
 
 
@@ -493,6 +494,12 @@ class MusicPlayer:
                     next_line_timestamp = None
                     if current_index + 1 < len(self.current_lyrics):
                         next_line_timestamp = self.current_lyrics[current_index + 1].timestamp
+
+                    # michael: new logic to switch lines right after the current line ends  # michael-todo remove this
+                    # if LYRICS_LINE_SWITCHING_ON_END and lyric.words[-1].end_timestamp is not None and \
+                    #         next_line_timestamp is not None and lyric.words[-1].end_timestamp + 1.0 < next_line_timestamp:
+                    #     next_line_timestamp = lyric.words[-1].end_timestamp + 1.0
+
                     line_text = self.format_precise_lyric_line(lyric, current_time, next_line_timestamp)
                     line = f"♪ {line_text}"
                 else:
@@ -592,18 +599,36 @@ class MusicPlayer:
         if word_duration <= 0:
             word_duration = 0.5
 
-        # 指数衰减曲线/指数饱和函数 Shrink the word duration when the duration is way too long, using a curve to scale it down
-        # https://asset-cdn.uscardforum.com/original/4X/3/d/9/3d9d969d8f021d34ad5cf32a21b6f1439ec9118c.png
+        # # 指数衰减曲线/指数饱和函数 Shrink the word duration when the duration is way too long, using a curve to scale it down
+        # # https://asset-cdn.uscardforum.com/original/4X/3/d/9/3d9d969d8f021d34ad5cf32a21b6f1439ec9118c.png
         L = 2.0 # max duration for compression
-        Curve = 0.85  # Compression factor
+        Curve = 1  # Compression factor
         compressed = L * (1 - math.exp(-word_duration / L * Curve))
         word_duration = min(word_duration, compressed)
         word_duration = max(0.05, word_duration)  # Ensure minimum duration
 
-        word_progress = min(1.0, max(0.0, (current_time - word.timestamp) / word_duration))
+        # word_progress = min(1.0, max(0.0, (current_time - word.timestamp) / word_duration))
 
-        # Calculate how many characters should be revealed
-        chars_to_reveal = int(len(word.text) * word_progress)
+        # # Calculate how many characters should be revealed
+        # chars_to_reveal = int(len(word.text) * word_progress)
+
+        # Ver 2.0: Commented out因为终端无法做到一个字符中间过渡，只能整个改颜色，所以唱到需要先变亮
+        # time_per_char = word_duration / max(1, len(word.text))  # Avoid division by zero
+        # chars_to_reveal = min(len(word.text),int((current_time - word.timestamp) / time_per_char) + 1)
+
+        # # Ver 3.0: Reveal one character at a time with a small delay before starting
+        time_per_char = word_duration / max(1, len(word.text))
+        elapsed = current_time - word.timestamp
+        REVEAL_SPSION = 0.05
+        if elapsed < 0:
+            chars_to_reveal = 0
+        elif elapsed < REVEAL_SPSION:
+            chars_to_reveal = 0
+        else:
+            chars_to_reveal = 1 + int((elapsed - REVEAL_SPSION) / time_per_char)
+
+        chars_to_reveal = max(0, min(len(word.text), chars_to_reveal))
+
 
         # Split the word into revealed and unrevealed parts
         revealed_part = word.text[:chars_to_reveal]
