@@ -2,7 +2,7 @@
 lrc-player
 """
 
-version = "3.8.0.2-alpha"
+version = "3.8.1"
 author = "Michael"
 
 import os

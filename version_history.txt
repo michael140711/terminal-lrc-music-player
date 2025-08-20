@@ -1,3 +1,11 @@
+3.8.1 8/20/2025 5:01 PM
+ fixed an issue where animation would highlight the word during the middle time.
+ we want to start changing color right after the beginning time start-
+	since console can't animate half a character.
+
+ This fixed a bug where Chinese/Korean/Japanese type lyrics has a significant delay,
+ 	since their word is one character, not in letters.
+
 3.7.0 8/20/2025 10:51 AM
 update mulitple lyrics support using V. bumping version to 3.7.0
 
