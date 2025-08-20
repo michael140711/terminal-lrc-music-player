@@ -39,7 +39,7 @@ def load_cfg() -> dict:
 		except Exception:
 			pass
 	# default: Only Full Lyrics
-	return {"mode": "full"}  # one of: main, both, full
+	return {"mode": "full", "disable_non_dt3": False}  # one of: main, both, full
 
 
 def save_cfg(cfg: dict) -> None:
@@ -116,13 +116,19 @@ def run_settings(cfg: dict) -> None:
 	while True:
 		clear_console()
 		print(f"{CYAN}Settings{RESET}")
-		print(f"1. {mode_label(cfg.get('mode', 'full'))}")
-		print("0. back")
+		print(f"1. Toggle - {mode_label(cfg.get('mode', 'full'))}")
+		dn3 = cfg.get("disable_non_dt3", False)
+		print(f"2. Disable ALL Non (DisplayType=3) when loading: {'ON' if dn3 else 'OFF'}")
+		print("---")
+		print("0. Back")
 		choice = input("> ").strip()
 		if choice == "0":
 			return
 		if choice == "1":
 			cfg["mode"] = cycle_mode(cfg.get("mode", "full"))
+			save_cfg(cfg)
+		elif choice == "2":
+			cfg["disable_non_dt3"] = not cfg.get("disable_non_dt3", False)
 			save_cfg(cfg)
 		else:
 			print("Unknown option. Use 1 to toggle mode, or 0 to go back.")
@@ -175,13 +181,29 @@ def main() -> None:
 		return
 	display_types = [get_display_type(p) for p in files]
 	on_mask = [True for _ in files]
+	# Preset based on setting when loading
+	if cfg.get("disable_non_dt3", False):
+		for i, dt in enumerate(display_types):
+			if dt != 3:
+				on_mask[i] = False
 
 	while True:
 		clear_console()
 		print_main_menu(files, on_mask, display_types, cfg)
 		choice = input("> ").strip()
 		if choice.lower() == "s":
+			_prev = cfg.get("disable_non_dt3", False)
 			run_settings(cfg)
+			_new = cfg.get("disable_non_dt3", False)
+			if _prev != _new:
+				if _new:
+					for i, dt in enumerate(display_types):
+						if dt != 3:
+							on_mask[i] = False
+				else:
+					for i, dt in enumerate(display_types):
+						if dt != 3:
+							on_mask[i] = True
 			continue
 		if choice == "0":
 			# Run conversions
@@ -192,7 +214,8 @@ def main() -> None:
 		try:
 			idx = int(choice)
 			if 1 <= idx <= len(files):
-				on_mask[idx - 1] = not on_mask[idx - 1]
+				i = idx - 1
+				on_mask[i] = not on_mask[i]
 			else:
 				print("Number out of range.")
 		except ValueError:
