@@ -108,8 +108,9 @@ def print_main_menu(files: list[Path], on_mask: list[bool], display_types: list[
 			extra = f" {RED}(displayType={dt}){RESET}"
 		print(f"{idx}. {p.name} : {status}{extra}")
 	print()
-	print("0: Run")
-	print("S: Settings")
+	run_idx = len(files) + 1
+	print(f"{run_idx}. run")
+	print("0. settings")
 
 
 def run_settings(cfg: dict) -> None:
@@ -191,7 +192,8 @@ def main() -> None:
 		clear_console()
 		print_main_menu(files, on_mask, display_types, cfg)
 		choice = input("> ").strip()
-		if choice.lower() == "s":
+		# 0 -> settings; (len(files)+1) -> run; numbers in [1..len(files)] toggle
+		if choice == "0":
 			_prev = cfg.get("disable_non_dt3", False)
 			run_settings(cfg)
 			_new = cfg.get("disable_non_dt3", False)
@@ -205,21 +207,22 @@ def main() -> None:
 						if dt != 3:
 							on_mask[i] = True
 			continue
-		if choice == "0":
-			# Run conversions
-			clear_console()
-			convert_selected(files, on_mask, cfg.get("mode", "full"))
-			break
-		# number? toggle OFF/ON
+		# number? toggle OFF/ON or run
 		try:
 			idx = int(choice)
+			run_idx = len(files) + 1
+			if idx == run_idx:
+				# Run conversions
+				clear_console()
+				convert_selected(files, on_mask, cfg.get("mode", "full"))
+				break
 			if 1 <= idx <= len(files):
 				i = idx - 1
 				on_mask[i] = not on_mask[i]
 			else:
 				print("Number out of range.")
 		except ValueError:
-			print("Enter a number to toggle, 0 to run, or S for settings.")
+			print("Enter a number to toggle, 0 for settings, or the last number to run.")
 
 
 if __name__ == "__main__":
