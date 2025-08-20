@@ -2,7 +2,7 @@
 lrc-player 8/18/2025 5:18 PM
 """
 
-version = "3.7.5"
+version = "3.7.6"
 author = "Michael"
 
 import os
@@ -192,6 +192,7 @@ class MusicPlayer:
         # transient header notification (e.g., Displaying: file.lrc)
         self.header_notification = ""
         self.header_notification_until = 0.0
+        self.header_notification_color = None
 
         # Initialize pygame mixer
         pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
@@ -737,13 +738,15 @@ class MusicPlayer:
         # Determine header line: temporary notification if active
         now = time.time()
         if self.header_notification and now < self.header_notification_until:
-            header_line = f"{Fore.GREEN}{self.header_notification}{Style.RESET_ALL}"
+            color = self.header_notification_color or Fore.GREEN
+            header_line = f"{color}{self.header_notification}{Style.RESET_ALL}"
         else:
             header_line = f"{Fore.GREEN}Version: {version} | Author: {author}{Style.RESET_ALL}"
             # Clear expired notification
             if self.header_notification and now >= self.header_notification_until:
                 self.header_notification = ""
                 self.header_notification_until = 0.0
+                self.header_notification_color = None
 
         # LRC position indicator
         if self.current_lyric_candidates:
@@ -770,27 +773,16 @@ class MusicPlayer:
     def display_controls(self):
         """Display control instructions"""
         # Check if we should show quit confirmation message
-        if self.quit_confirmation_time > 0:
-            if time.time() - self.quit_confirmation_time <= 3.0:
-                # Show quit confirmation message
-                controls = [
-                    "",
-                    f"{Fore.WHITE}{'─'*60}{Style.RESET_ALL}",
-                    f"{Fore.RED}Press 'Q' again to quit (within 3 seconds){Style.RESET_ALL}",
-                    f"{Fore.WHITE}{'─'*60}{Style.RESET_ALL}",
-                ]
-                return controls
-            else:
-                # Timeout reached, reset quit confirmation
-                self.quit_confirmation_time = 0
-                self.quit_message_displayed = False
+        # Reset confirmation if expired
+        if self.quit_confirmation_time > 0 and time.time() - self.quit_confirmation_time > 3.0:
+            self.quit_confirmation_time = 0
+            self.quit_message_displayed = False
 
         # Normal controls display
         controls = [
             "",
-            # UNCOMMENT THIS TO SHOW CONTROLS
             f"{Fore.WHITE}{'─'*60}{Style.RESET_ALL}",
-            f"{Fore.CYAN} [SPACE] | [N] | [P] | [←/→] | [Q] | [V] {Style.RESET_ALL}",
+            f"{Fore.CYAN} [SPACE] Pause | [N] Next | [P] Previous | [←/→] Seek | [Q] Quit{Style.RESET_ALL}",
             f"{Fore.WHITE}{'─'*60}{Style.RESET_ALL}",
         ]
         return controls
@@ -808,13 +800,12 @@ class MusicPlayer:
             self.current_lyric_choice_index = 0
             if self.current_lyric_candidates:
                 self.current_lrc_path = self.current_lyric_candidates[self.current_lyric_choice_index]
-                self.current_lyrics = self.load_lyrics_from_file(
-                    self.current_lrc_path, verbose=True
-                )
+                self.current_lyrics = self.load_lyrics_from_file(self.current_lrc_path, verbose=True)
                 # show header notification for 3 seconds
                 try:
                     self.header_notification = f"Displaying: {self.current_lrc_path.name}"
                     self.header_notification_until = time.time() + 3.0
+                    self.header_notification_color = Fore.GREEN
                 except Exception:
                     pass
             else:
@@ -990,6 +981,7 @@ class MusicPlayer:
                                 # header notification for 3 seconds
                                 self.header_notification = f"Displaying: {new_path.name}"
                                 self.header_notification_until = time.time() + 3.0
+                                self.header_notification_color = Fore.GREEN
                     except Exception:
                         # Stay silent per requirement; ignore switching errors
                         pass
@@ -1004,6 +996,10 @@ class MusicPlayer:
                     else:
                         self.quit_confirmation_time = time.time()
                         self.quit_message_displayed = True
+                        # Show quit confirmation in header for 3 seconds, in red
+                        self.header_notification = "Press 'Q' again to quit (within 3 seconds)"
+                        self.header_notification_until = time.time() + 3.0
+                        self.header_notification_color = Fore.RED
                     continue
 
                 # Ignore anything else
