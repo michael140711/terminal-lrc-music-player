@@ -1,8 +1,8 @@
 """
-lrc-player 8/18/2025 5:18 PM
+lrc-player
 """
 
-version = "3.7.6"
+version = "3.7.0"
 author = "Michael"
 
 import os

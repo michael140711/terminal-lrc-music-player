@@ -1,3 +1,9 @@
+3.7.0 8/20/2025 10:51 AM
+update mulitple lyrics support using V. bumping version to 3.7.0
+
+3.6.5
+more seeking fex
+
 3.6.4 8/19/2025 11:12 am
  merged with seeking fix - seeking fix at version 3.5.4. Seeking is now fixed.
 
