@@ -185,6 +185,9 @@ class MusicPlayer:
         self.navigation_action = None  # 'next' | 'previous' | 'quit' | None
         self.quit_confirmation_time = 0.0
         self.quit_message_displayed = False
+        # lyrics candidates for current track and selected index
+        self.current_lyric_candidates = []
+        self.current_lyric_choice_index = 0
 
         # Initialize pygame mixer
         pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
@@ -245,6 +248,47 @@ class MusicPlayer:
                 best_match = lrc_file
 
         return best_match
+
+    def find_all_lyrics_matches(self, song_stem: str) -> List[Path]:
+        """Return all matching LRC files (exact and partial) ordered by relevance.
+
+        Order: exact match first (if any), then partial matches by score desc.
+        """
+        if not self.songs_dir.exists():
+            return []
+
+        lrc_files = list(self.songs_dir.glob("*.lrc"))
+        if not lrc_files:
+            return []
+
+        normalized_song = self.normalize_filename(song_stem)
+
+        exact_matches: List[Path] = []
+        partials: List[Tuple[Path, float]] = []
+
+        for lrc_file in lrc_files:
+            lrc_stem = lrc_file.stem
+            if lrc_stem == song_stem:
+                exact_matches.append(lrc_file)
+                continue
+
+            normalized_lrc = self.normalize_filename(lrc_stem)
+            score = self.calculate_match_score(normalized_song, normalized_lrc)
+            if score >= 0.7:
+                partials.append((lrc_file, score))
+
+        # Sort partials by score desc, then by filename for stability
+        partials.sort(key=lambda x: (-x[1], x[0].name))
+        ordered = exact_matches + [p[0] for p in partials]
+
+        # De-duplicate while preserving order
+        seen = set()
+        unique_ordered = []
+        for p in ordered:
+            if p not in seen:
+                seen.add(p)
+                unique_ordered.append(p)
+        return unique_ordered
 
     def normalize_filename(self, filename: str) -> str:
         """Normalize filename for better matching"""
@@ -335,6 +379,15 @@ class MusicPlayer:
 
         print(f"No lyrics found for: {song_path.name}")
         return []
+
+    def load_lyrics_from_file(self, lrc_path: Path, *, verbose: bool = True) -> List[LyricLine]:
+        """Load lyrics from a specific LRC file path."""
+        lyrics = LRCParser.parse_lrc_file(lrc_path)
+        if lyrics and verbose:
+            precise_count = sum(1 for lyric in lyrics if lyric.is_precise)
+            if precise_count > 0:
+                print(f"Detected precise LRC with word-by-word timing ({precise_count} lines)")
+        return lyrics
 
     def clear_screen(self):
         """Clear the terminal screen"""
@@ -712,7 +765,7 @@ class MusicPlayer:
             "",
             # UNCOMMENT THIS TO SHOW CONTROLS
             f"{Fore.WHITE}{'─'*60}{Style.RESET_ALL}",
-            f"{Fore.CYAN} [SPACE] Pause | [N] Next | [P] Previous | [←/→] Seek | [Q] Quit{Style.RESET_ALL}",
+            f"{Fore.CYAN} [SPACE] | [N] | [P] | [←/→] | [Q] | [V] {Style.RESET_ALL}",
             f"{Fore.WHITE}{'─'*60}{Style.RESET_ALL}",
         ]
         return controls
@@ -725,8 +778,16 @@ class MusicPlayer:
             # Load the song
             pygame.mixer.music.load(str(song_path))
 
-            # Load lyrics
-            self.current_lyrics = self.load_lyrics(song_path)
+            # Discover all matching lyrics and load the initial one
+            self.current_lyric_candidates = self.find_all_lyrics_matches(song_path.stem)
+            self.current_lyric_choice_index = 0
+            if self.current_lyric_candidates:
+                self.current_lyrics = self.load_lyrics_from_file(
+                    self.current_lyric_candidates[self.current_lyric_choice_index], verbose=True
+                )
+            else:
+                # Fallback to legacy behavior (may find one via custom logic)
+                self.current_lyrics = self.load_lyrics(song_path)
             print(f"Loaded {len(self.current_lyrics)} lyric lines")
 
             # Start playing
@@ -881,6 +942,21 @@ class MusicPlayer:
                         self.navigation_action = 'previous'
                         self.is_playing = False
                         pygame.mixer.music.stop()
+                    continue
+
+                if key == 'v':  # Switch to next lyrics file (cycle)
+                    try:
+                        if self.current_lyric_candidates:
+                            self.current_lyric_choice_index = (
+                                (self.current_lyric_choice_index + 1) % len(self.current_lyric_candidates)
+                            )
+                            new_path = self.current_lyric_candidates[self.current_lyric_choice_index]
+                            new_lyrics = self.load_lyrics_from_file(new_path, verbose=False)
+                            if new_lyrics:
+                                self.current_lyrics = new_lyrics
+                    except Exception:
+                        # Stay silent per requirement; ignore switching errors
+                        pass
                     continue
 
                 if key == 'q':  # Quit with confirmation
