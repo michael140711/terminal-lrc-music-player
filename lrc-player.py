@@ -188,6 +188,10 @@ class MusicPlayer:
         # lyrics candidates for current track and selected index
         self.current_lyric_candidates = []
         self.current_lyric_choice_index = 0
+        self.current_lrc_path = None
+        # transient header notification (e.g., Displaying: file.lrc)
+        self.header_notification = ""
+        self.header_notification_until = 0.0
 
         # Initialize pygame mixer
         pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
@@ -730,12 +734,33 @@ class MusicPlayer:
 
         status = "⏸️  PAUSED " if self.is_paused else "▶️  PLAYING"
 
+        # Determine header line: temporary notification if active
+        now = time.time()
+        if self.header_notification and now < self.header_notification_until:
+            header_line = f"{Fore.GREEN}{self.header_notification}{Style.RESET_ALL}"
+        else:
+            header_line = f"{Fore.GREEN}Version: {version} | Author: {author}{Style.RESET_ALL}"
+            # Clear expired notification
+            if self.header_notification and now >= self.header_notification_until:
+                self.header_notification = ""
+                self.header_notification_until = 0.0
+
+        # LRC position indicator
+        if self.current_lyric_candidates:
+            lrc_pos = self.current_lyric_choice_index + 1
+            lrc_total = len(self.current_lyric_candidates)
+        elif self.current_lyrics:
+            lrc_pos = 1
+            lrc_total = 1
+        else:
+            lrc_pos = 0
+            lrc_total = 0
+
         info_lines = [
             f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}",
-            f"{Fore.GREEN}Version: {version} | Author: {author}{Style.RESET_ALL}",
+            header_line,
             f"{Fore.YELLOW}🎵 Now Playing: {song_name}{Style.RESET_ALL}",
-            # f"{Fore.BLUE}📀 Track {self.current_song_index + 1} of {len(self.playlist)}{Style.RESET_ALL}",
-            f"{Fore.MAGENTA}{status} |{Fore.BLUE}📀 Track {self.current_song_index + 1} of {len(self.playlist)} | Time: {current_min:02d}:{current_sec:05.2f}{Style.RESET_ALL}",
+            f"{Fore.MAGENTA}{status} |{Fore.BLUE}📀 Track {self.current_song_index + 1} of {len(self.playlist)} | Lrc {lrc_pos} of {lrc_total} | Time: {current_min:02d}:{current_sec:05.2f}{Style.RESET_ALL}",
             f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}",
             "",
         ]
@@ -782,9 +807,16 @@ class MusicPlayer:
             self.current_lyric_candidates = self.find_all_lyrics_matches(song_path.stem)
             self.current_lyric_choice_index = 0
             if self.current_lyric_candidates:
+                self.current_lrc_path = self.current_lyric_candidates[self.current_lyric_choice_index]
                 self.current_lyrics = self.load_lyrics_from_file(
-                    self.current_lyric_candidates[self.current_lyric_choice_index], verbose=True
+                    self.current_lrc_path, verbose=True
                 )
+                # show header notification for 3 seconds
+                try:
+                    self.header_notification = f"Displaying: {self.current_lrc_path.name}"
+                    self.header_notification_until = time.time() + 3.0
+                except Exception:
+                    pass
             else:
                 # Fallback to legacy behavior (may find one via custom logic)
                 self.current_lyrics = self.load_lyrics(song_path)
@@ -954,6 +986,10 @@ class MusicPlayer:
                             new_lyrics = self.load_lyrics_from_file(new_path, verbose=False)
                             if new_lyrics:
                                 self.current_lyrics = new_lyrics
+                                self.current_lrc_path = new_path
+                                # header notification for 3 seconds
+                                self.header_notification = f"Displaying: {new_path.name}"
+                                self.header_notification_until = time.time() + 3.0
                     except Exception:
                         # Stay silent per requirement; ignore switching errors
                         pass
