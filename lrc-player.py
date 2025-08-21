@@ -3,6 +3,7 @@ lrc-player
 """
 
 version = "3.8.1"
+build = "20250821.0"
 author = "Michael"
 
 import os
@@ -410,7 +411,7 @@ class MusicPlayer:
         # Display player info (keep the header)
         info_lines = [
             f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}",
-            f"{Fore.GREEN}Version: {version} | Author: {author}{Style.RESET_ALL}",
+            f"{Fore.GREEN}Version: {version} | Build Ver: {build} | Author: {author}{Style.RESET_ALL}",
             f"{Fore.YELLOW}🎵 {message}{Style.RESET_ALL}",
             f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}",
             "",
