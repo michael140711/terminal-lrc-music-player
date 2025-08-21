@@ -1,6 +1,9 @@
 r'''
 convert-from-apple-lrc.py — Convert Apple Music TTML/JSON to LRC (traditional or enhanced)
 
+Known Issues:
+ Some lyrics in non-letter languages may not work with -c clipboard mode (中文, 日本語, 한국어 无法用剪贴板模式).
+
 Usage:
     # Convert from a file (Apple Music JSON, a snippet containing "ttml": "<tt...>", or raw TTML)
     python .\convert-from-apple-lrc.py <input.json|xml|ttml> [output.lrc] [-mainonly]
