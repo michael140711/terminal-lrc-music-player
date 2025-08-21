@@ -196,8 +196,34 @@ class MusicPlayer:
         self.header_notification_until = 0.0
         self.header_notification_color = None
 
-        # Initialize pygame mixer
-        pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+    # Input thread management (ensure only one handler is active)
+        self._input_thread = None
+        self._input_thread_stop = None
+
+    # Initialize pygame mixer
+    pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+
+    def _stop_input_thread(self, join: bool = True):
+        """Signal the input thread to stop and optionally join it."""
+        try:
+            if self._input_thread_stop is not None:
+                self._input_thread_stop.set()
+            if self._input_thread is not None and join:
+                self._input_thread.join(timeout=0.5)
+        except Exception:
+            pass
+        finally:
+            self._input_thread = None
+            self._input_thread_stop = None
+
+    def _start_input_thread(self):
+        """Start the keyboard input thread if not already running; ensure previous is stopped."""
+        # Stop any lingering thread first
+        self._stop_input_thread(join=True)
+        # Fresh stop event and thread
+        self._input_thread_stop = threading.Event()
+        self._input_thread = threading.Thread(target=self.handle_input, daemon=True)
+        self._input_thread.start()
 
     def load_playlist(self) -> bool:
         """Load playlist from player-temp.cfg"""
@@ -531,10 +557,10 @@ class MusicPlayer:
         if not lyric.words:
             return f"{Fore.WHITE}{lyric.text}{Style.RESET_ALL}"
 
-        formatted_parts = []
+        formatted_parts: List[str] = []
         current_word_index = -1
 
-    # Find the current word being sung
+        # Find the current word being sung
         for i, word in enumerate(lyric.words):
             if word.timestamp <= current_time:
                 current_word_index = i
@@ -552,7 +578,6 @@ class MusicPlayer:
                 # to avoid flicker (too small) or sluggishness (too large).
                 min_dur, max_dur = 0.05, 2.5
                 # Prefer explicit end timestamp when available
-                raw_duration: float
                 if word.end_timestamp is not None:
                     raw_duration = max(0.0, word.end_timestamp - word.timestamp)
                 elif i + 1 < len(lyric.words):
@@ -570,8 +595,9 @@ class MusicPlayer:
                             sorted_gaps = sorted(gaps)
                             mid = len(sorted_gaps) // 2
                             raw_duration = (
-                                (sorted_gaps[mid] if len(sorted_gaps) % 2 == 1 else
-                                 (sorted_gaps[mid - 1] + sorted_gaps[mid]) / 2.0)
+                                sorted_gaps[mid]
+                                if len(sorted_gaps) % 2 == 1
+                                else (sorted_gaps[mid - 1] + sorted_gaps[mid]) / 2.0
                             )
                         else:
                             raw_duration = 0.5
@@ -856,8 +882,7 @@ class MusicPlayer:
             last_display_time = 0
 
             # Start input handler thread AFTER is_playing is True
-            input_thread = threading.Thread(target=self.handle_input, daemon=True)
-            input_thread.start()
+            self._start_input_thread()
 
             # Main display loop
             while self.is_playing:
@@ -908,10 +933,16 @@ class MusicPlayer:
         except Exception as e:
             print(f"Error playing {song_path.name}: {e}")
         finally:
+            # Ensure input thread for this song is stopped before returning
+            self._stop_input_thread(join=True)
             self.show_cursor()  # Always restore cursor when done
 
     def handle_input(self):
         """Handle keyboard input in a separate thread"""
+        stop_event = self._input_thread_stop
+        if stop_event is None:
+            # Nothing to do; defensive guard
+            return True
         def _read_key_event() -> Optional[str]:
             """Translate msvcrt byte sequences to high-level keys; ignore combos/modifiers."""
             if not msvcrt.kbhit():
@@ -943,8 +974,7 @@ class MusicPlayer:
             if ord(ch) < 32:
                 return None
             return ch.lower()
-
-        while self.is_playing:
+        while self.is_playing and not stop_event.is_set():
             try:
                 key = _read_key_event()
                 if key is None:
@@ -1067,6 +1097,8 @@ class MusicPlayer:
         finally:
             pygame.mixer.music.stop()
             pygame.mixer.quit()
+            # Final safety: ensure input thread is stopped on exit
+            self._stop_input_thread(join=True)
             self.show_cursor()  # Restore cursor on exit
 
 
