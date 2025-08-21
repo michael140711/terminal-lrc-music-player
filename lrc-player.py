@@ -411,7 +411,7 @@ class MusicPlayer:
         # Display player info (keep the header)
         info_lines = [
             f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}",
-            f"{Fore.GREEN}Version: {version} | Build Ver: {build} | Author: {author}{Style.RESET_ALL}",
+            f"{Fore.GREEN}Version: {version} | Author: {author}{Style.RESET_ALL}",
             f"{Fore.YELLOW}🎵 {message}{Style.RESET_ALL}",
             f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}",
             "",
@@ -763,7 +763,7 @@ class MusicPlayer:
             color = self.header_notification_color or Fore.GREEN
             header_line = f"{color}{self.header_notification}{Style.RESET_ALL}"
         else:
-            header_line = f"{Fore.GREEN}Version: {version} | Author: {author}{Style.RESET_ALL}"
+            header_line = f"{Fore.GREEN}Version: {version} | Build Ver: {build} | Author: {author}{Style.RESET_ALL}"
             # Clear expired notification
             if self.header_notification and now >= self.header_notification_until:
                 self.header_notification = ""
