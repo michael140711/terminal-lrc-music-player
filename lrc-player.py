@@ -2,8 +2,7 @@
 lrc-player
 """
 
-version = "3.8.1"
-build = "20250821.0"
+version = "3.8.1-alpha"
 author = "Michael"
 
 import os
@@ -789,7 +788,7 @@ class MusicPlayer:
             color = self.header_notification_color or Fore.GREEN
             header_line = f"{color}{self.header_notification}{Style.RESET_ALL}"
         else:
-            header_line = f"{Fore.GREEN}Version: {version} | Build Ver: {build} | Author: {author}{Style.RESET_ALL}"
+            header_line = f"{Fore.GREEN}Version: {version} | Author: {author}{Style.RESET_ALL}"
             # Clear expired notification
             if self.header_notification and now >= self.header_notification_until:
                 self.header_notification = ""
