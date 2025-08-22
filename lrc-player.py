@@ -2,7 +2,7 @@
 lrc-player
 """
 
-version = "3.8.1-alpha"
+version = "3.8.2-dev-4"
 author = "Michael"
 
 import os
@@ -640,14 +640,19 @@ class MusicPlayer:
         # # Ver 3.0: Reveal one character at a time with a small delay before starting
         time_per_char = word_duration / max(1, len(word.text))
         elapsed = current_time - word.timestamp
-        REVEAL_SPSION = 0.05
-        if elapsed < 0:
-            chars_to_reveal = 0
-        elif elapsed < REVEAL_SPSION:
-            chars_to_reveal = 0
-        else:
-            chars_to_reveal = 1 + int((elapsed - REVEAL_SPSION) / time_per_char)
+        # REVEAL_SPSION = 0.05
+        # if elapsed < 0:
+        #     chars_to_reveal = 0
+        # elif elapsed < REVEAL_SPSION:
+        #     chars_to_reveal = 0
+        # else:
+        #     chars_to_reveal = int(((elapsed - REVEAL_SPSION) / time_per_char)) + 1
+        # chars_to_reveal = max(0, min(len(word.text), chars_to_reveal))
 
+        # Ver: 4.0: Use a ratio.
+        ratio = 0.45 #25%
+
+        chars_to_reveal = math.floor(elapsed / time_per_char - ratio) + 1
         chars_to_reveal = max(0, min(len(word.text), chars_to_reveal))
 
 
@@ -810,7 +815,7 @@ class MusicPlayer:
             f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}",
             header_line,
             f"{Fore.YELLOW}🎵 Now Playing: {song_name}{Style.RESET_ALL}",
-            f"{Fore.MAGENTA}{status} |{Fore.BLUE}📀 Track {self.current_song_index + 1} of {len(self.playlist)} | Lrc {lrc_pos} of {lrc_total} | Time: {current_min:02d}:{current_sec:05.2f}{Style.RESET_ALL}",
+            f"{Fore.MAGENTA}{status} |{Fore.BLUE}📀 {self.current_song_index + 1} of {len(self.playlist)} | LRC {lrc_pos} of {lrc_total} | Time: {current_min:02d}:{current_sec:05.2f}{Style.RESET_ALL}",
             f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}",
             "",
         ]
