@@ -1,8 +1,8 @@
 """
 lrc-player
 """
-
-version = "3.8.2-word-4-deekfix-2"
+temp_ratio = 0.2
+version = f"3.8.4-alpha-wordV4-{temp_ratio*100:.0f}%/deek-fix-2"
 author = "Michael"
 
 import os
@@ -650,8 +650,7 @@ class MusicPlayer:
         # chars_to_reveal = max(0, min(len(word.text), chars_to_reveal))
 
         # Ver: 4.0: Use a ratio.
-        ratio = 0.45 #25%
-
+        ratio = temp_ratio
         chars_to_reveal = math.floor(elapsed / time_per_char - ratio) + 1
         chars_to_reveal = max(0, min(len(word.text), chars_to_reveal))
 
