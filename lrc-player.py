@@ -2,7 +2,7 @@
 lrc-player
 """
 
-version = "3.8.2-dev-4"
+version = "3.8.2-word-4-deekfix-2"
 author = "Michael"
 
 import os
@@ -928,7 +928,11 @@ class MusicPlayer:
                     last_display_time = current_time
 
                 # Check if song finished
-                if not pygame.mixer.music.get_busy() and not self.is_paused:
+                if (
+                    not self.is_paused
+                    and not pygame.mixer.music.get_busy()
+                    and (time.time() - self._last_seek_at) > 0.5  # ignore brief gap right after seek
+                ):
                     self.is_playing = False  # Mark as finished naturally
                     break
 
