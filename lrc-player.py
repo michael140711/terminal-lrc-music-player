@@ -2,7 +2,7 @@
 lrc-player
 """
 temp_ratio = 0.2
-version = f"3.8.4-alpha-wordV4-{temp_ratio*100:.0f}%/deek-fix-2"
+version = f"3.9.0-alpha-wordV4-{temp_ratio*100:.0f}%/deek-fix-2"
 author = "Michael"
 
 import os
@@ -194,8 +194,9 @@ class MusicPlayer:
         self.header_notification = ""
         self.header_notification_until = 0.0
         self.header_notification_color = None
-
-    # Input thread management (ensure only one handler is active)
+        # Lyrics delay (Bluetooth audio offset)
+        self.lyric_delay = 0.0
+        # Input thread management (ensure only one handler is active)
         self._input_thread = None
         self._input_thread_stop = None
 
@@ -225,26 +226,70 @@ class MusicPlayer:
         self._input_thread.start()
 
     def load_playlist(self) -> bool:
-        """Load playlist from player-temp.cfg"""
+        """Load playlist (supports optional config tags and Bluetooth lyrics delay)."""
         if not self.cfg_path.exists():
             print(f"Config file not found: {self.cfg_path}")
             return False
 
         try:
             with open(self.cfg_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
+                lines = f.read().splitlines()
+
+            # Detect tagged config (e.g., [BlueTooth Audio Offset], [Playlist])
+            has_tags = any(
+                (ln := line.strip()).startswith('[') and ln.endswith(']')
+                for line in lines
+            )
 
             self.playlist = []
-            for line in lines:
-                filename = line.strip()
-                if filename:
-                    song_path = self.songs_dir / filename
-                    if song_path.exists():
-                        self.playlist.append(song_path)
-                    else:
-                        print(f"Warning: Song file not found: {song_path}")
+            self.lyric_delay = 0.0  # default if not specified
 
-            print(f"Loaded {len(self.playlist)} songs from playlist")
+            if has_tags:
+                current_section = None
+                for raw in lines:
+                    line = raw.strip()
+                    if not line:
+                        continue
+
+                    # Section header
+                    if line.startswith('[') and line.endswith(']'):
+                        current_section = line[1:-1].strip().lower()
+                        continue
+
+                    # Parse offset
+                    if current_section in ("bluetooth audio offset", "bluetooth audio delay"):
+                        if '=' in line:
+                            key, val = [p.strip() for p in line.split('=', 1)]
+                            if key.lower() == 'offset':
+                                try:
+                                    v = float(val)
+                                    if math.isfinite(v):
+                                        self.lyric_delay = max(0.0, v)  # clamp to >= 0 (delay)
+                                except ValueError:
+                                    pass
+                        continue
+
+                    # Parse playlist entries
+                    if current_section == "playlist":
+                        filename = line.strip()
+                        if filename:
+                            song_path = self.songs_dir / filename
+                            if song_path.exists():
+                                self.playlist.append(song_path)
+                            else:
+                                print(f"Warning: Song file not found: {song_path}")
+            else:
+                # Legacy format: lines are filenames only
+                for raw in lines:
+                    filename = raw.strip()
+                    if filename:
+                        song_path = self.songs_dir / filename
+                        if song_path.exists():
+                            self.playlist.append(song_path)
+                        else:
+                            print(f"Warning: Song file not found: {song_path}")
+
+            print(f"Loaded {len(self.playlist)} songs from playlist (lyrics delay: {self.lyric_delay:.2f}s)")
             return len(self.playlist) > 0
 
         except Exception as e:
@@ -475,7 +520,7 @@ class MusicPlayer:
         if not self.current_lyrics:
             return -1
 
-        current_time = self.get_playback_position()
+        current_time = self.get_lyrics_time()
         current_index = -1
         for i, lyric in enumerate(self.current_lyrics):
             if lyric.timestamp <= current_time:
@@ -484,13 +529,18 @@ class MusicPlayer:
                 break
         return current_index
 
+
+    def get_lyrics_time(self) -> float:
+        """Playback time used for lyrics display/animation (applies Bluetooth delay)."""
+        return max(0.0, self.get_playback_position() - self.lyric_delay)
+
     def display_lyrics(self):
         """Display lyrics with current line highlighted and word-by-word for precise LRC"""
         if not self.current_lyrics:
             return []
 
         # Get current playback position
-        current_time = self.get_playback_position()
+        current_time = self.get_lyrics_time()
 
         # Find current lyric line
         current_index = -1

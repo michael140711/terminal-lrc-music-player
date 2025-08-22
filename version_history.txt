@@ -1,3 +1,15 @@
+3.9.0 8/22/2025 4:00 PM
+ version bump because I realized the lyric is not fully sync up partially because there is an audio delay using bluetooth
+
+ - Added logic for cfg.playlist file (player-temp.cfg) and added a tag for audio offset for bluetooth
+ - Added logic for player read the offset and take into the offset during animation.
+
+3.8.4
+ fixed an issue where multiple threads would show up if audio ends naturally.
+ fixed an issue where jumping would randomly happen during seeking using [←/→] button
+
+ Tried 4th version of displaying/animation logic, which would use a ratio to calculate when a character changes color.
+
 3.8.1 8/20/2025 5:01 PM
  fixed an issue where animation would highlight the word during the middle time.
  we want to start changing color right after the beginning time start-
