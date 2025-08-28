@@ -1,8 +1,8 @@
 """
 lrc-player
 """
-
-version = "3.7.0"
+temp_ratio = 0.15
+version = f"3.9.5"
 author = "Michael"
 
 import os
@@ -36,6 +36,7 @@ except ImportError:
 
 CFG_FILENAME = "player-temp.cfg"
 SONGS_DIRNAME = "songs"
+LYRICS_LINE_SWITCHING_ON_END = True # Whether to switch to next line when the current line ends
 
 
 
@@ -193,31 +194,102 @@ class MusicPlayer:
         self.header_notification = ""
         self.header_notification_until = 0.0
         self.header_notification_color = None
+        # Lyrics delay (Bluetooth audio offset)
+        self.lyric_delay = 0.0
+        # Input thread management (ensure only one handler is active)
+        self._input_thread = None
+        self._input_thread_stop = None
 
-        # Initialize pygame mixer
-        pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+    # Initialize pygame mixer
+    pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+
+    def _stop_input_thread(self, join: bool = True):
+        """Signal the input thread to stop and optionally join it."""
+        try:
+            if self._input_thread_stop is not None:
+                self._input_thread_stop.set()
+            if self._input_thread is not None and join:
+                self._input_thread.join(timeout=0.5)
+        except Exception:
+            pass
+        finally:
+            self._input_thread = None
+            self._input_thread_stop = None
+
+    def _start_input_thread(self):
+        """Start the keyboard input thread if not already running; ensure previous is stopped."""
+        # Stop any lingering thread first
+        self._stop_input_thread(join=True)
+        # Fresh stop event and thread
+        self._input_thread_stop = threading.Event()
+        self._input_thread = threading.Thread(target=self.handle_input, daemon=True)
+        self._input_thread.start()
 
     def load_playlist(self) -> bool:
-        """Load playlist from player-temp.cfg"""
+        """Load playlist (supports optional config tags and Bluetooth lyrics delay)."""
         if not self.cfg_path.exists():
             print(f"Config file not found: {self.cfg_path}")
             return False
 
         try:
             with open(self.cfg_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
+                lines = f.read().splitlines()
+
+            # Detect tagged config (e.g., [BlueTooth Audio Offset], [Playlist])
+            has_tags = any(
+                (ln := line.strip()).startswith('[') and ln.endswith(']')
+                for line in lines
+            )
 
             self.playlist = []
-            for line in lines:
-                filename = line.strip()
-                if filename:
-                    song_path = self.songs_dir / filename
-                    if song_path.exists():
-                        self.playlist.append(song_path)
-                    else:
-                        print(f"Warning: Song file not found: {song_path}")
+            self.lyric_delay = 0.0  # default if not specified
 
-            print(f"Loaded {len(self.playlist)} songs from playlist")
+            if has_tags:
+                current_section = None
+                for raw in lines:
+                    line = raw.strip()
+                    if not line:
+                        continue
+
+                    # Section header
+                    if line.startswith('[') and line.endswith(']'):
+                        current_section = line[1:-1].strip().lower()
+                        continue
+
+                    # Parse offset
+                    if current_section in ("bluetooth audio offset", "bluetooth audio delay"):
+                        if '=' in line:
+                            key, val = [p.strip() for p in line.split('=', 1)]
+                            if key.lower() == 'offset':
+                                try:
+                                    v = float(val)
+                                    if math.isfinite(v):
+                                        self.lyric_delay = max(0.0, v)  # clamp to >= 0 (delay)
+                                except ValueError:
+                                    pass
+                        continue
+
+                    # Parse playlist entries
+                    if current_section == "playlist":
+                        filename = line.strip()
+                        if filename:
+                            song_path = self.songs_dir / filename
+                            if song_path.exists():
+                                self.playlist.append(song_path)
+                            else:
+                                print(f"Warning: Song file not found: {song_path}")
+            else:
+                # Legacy format: lines are filenames only
+                for raw in lines:
+                    filename = raw.strip()
+                    if filename:
+                        song_path = self.songs_dir / filename
+                        if song_path.exists():
+                            self.playlist.append(song_path)
+                        else:
+                            print(f"Warning: Song file not found: {song_path}")
+
+            print(f"Loaded {len(self.playlist)} songs from playlist (lyrics delay: {self.lyric_delay:.2f}s)")
             return len(self.playlist) > 0
 
         except Exception as e:
@@ -448,7 +520,7 @@ class MusicPlayer:
         if not self.current_lyrics:
             return -1
 
-        current_time = self.get_playback_position()
+        current_time = self.get_lyrics_time()
         current_index = -1
         for i, lyric in enumerate(self.current_lyrics):
             if lyric.timestamp <= current_time:
@@ -457,13 +529,18 @@ class MusicPlayer:
                 break
         return current_index
 
+
+    def get_lyrics_time(self) -> float:
+        """Playback time used for lyrics display/animation (applies Bluetooth delay)."""
+        return max(0.0, self.get_playback_position() - self.lyric_delay)
+
     def display_lyrics(self):
         """Display lyrics with current line highlighted and word-by-word for precise LRC"""
         if not self.current_lyrics:
             return []
 
         # Get current playback position
-        current_time = self.get_playback_position()
+        current_time = self.get_lyrics_time()
 
         # Find current lyric line
         current_index = -1
@@ -493,6 +570,7 @@ class MusicPlayer:
                     next_line_timestamp = None
                     if current_index + 1 < len(self.current_lyrics):
                         next_line_timestamp = self.current_lyrics[current_index + 1].timestamp
+
                     line_text = self.format_precise_lyric_line(lyric, current_time, next_line_timestamp)
                     line = f"♪ {line_text}"
                 else:
@@ -528,10 +606,10 @@ class MusicPlayer:
         if not lyric.words:
             return f"{Fore.WHITE}{lyric.text}{Style.RESET_ALL}"
 
-        formatted_parts = []
+        formatted_parts: List[str] = []
         current_word_index = -1
 
-    # Find the current word being sung
+        # Find the current word being sung
         for i, word in enumerate(lyric.words):
             if word.timestamp <= current_time:
                 current_word_index = i
@@ -549,7 +627,6 @@ class MusicPlayer:
                 # to avoid flicker (too small) or sluggishness (too large).
                 min_dur, max_dur = 0.05, 2.5
                 # Prefer explicit end timestamp when available
-                raw_duration: float
                 if word.end_timestamp is not None:
                     raw_duration = max(0.0, word.end_timestamp - word.timestamp)
                 elif i + 1 < len(lyric.words):
@@ -567,8 +644,9 @@ class MusicPlayer:
                             sorted_gaps = sorted(gaps)
                             mid = len(sorted_gaps) // 2
                             raw_duration = (
-                                (sorted_gaps[mid] if len(sorted_gaps) % 2 == 1 else
-                                 (sorted_gaps[mid - 1] + sorted_gaps[mid]) / 2.0)
+                                sorted_gaps[mid]
+                                if len(sorted_gaps) % 2 == 1
+                                else (sorted_gaps[mid - 1] + sorted_gaps[mid]) / 2.0
                             )
                         else:
                             raw_duration = 0.5
@@ -592,18 +670,40 @@ class MusicPlayer:
         if word_duration <= 0:
             word_duration = 0.5
 
-        # 指数衰减曲线/指数饱和函数 Shrink the word duration when the duration is way too long, using a curve to scale it down
-        # https://asset-cdn.uscardforum.com/original/4X/3/d/9/3d9d969d8f021d34ad5cf32a21b6f1439ec9118c.png
+        # # 指数衰减曲线/指数饱和函数 Shrink the word duration when the duration is way too long, using a curve to scale it down
+        # # https://asset-cdn.uscardforum.com/original/4X/3/d/9/3d9d969d8f021d34ad5cf32a21b6f1439ec9118c.png
         L = 2.0 # max duration for compression
-        Curve = 0.85  # Compression factor
+        Curve = 1  # Compression factor
         compressed = L * (1 - math.exp(-word_duration / L * Curve))
         word_duration = min(word_duration, compressed)
         word_duration = max(0.05, word_duration)  # Ensure minimum duration
 
-        word_progress = min(1.0, max(0.0, (current_time - word.timestamp) / word_duration))
+        # word_progress = min(1.0, max(0.0, (current_time - word.timestamp) / word_duration))
 
-        # Calculate how many characters should be revealed
-        chars_to_reveal = int(len(word.text) * word_progress)
+        # # Calculate how many characters should be revealed
+        # chars_to_reveal = int(len(word.text) * word_progress)
+
+        # Ver 2.0: Commented out因为终端无法做到一个字符中间过渡，只能整个改颜色，所以唱到需要先变亮
+        # time_per_char = word_duration / max(1, len(word.text))  # Avoid division by zero
+        # chars_to_reveal = min(len(word.text),int((current_time - word.timestamp) / time_per_char) + 1)
+
+        # # Ver 3.0: Reveal one character at a time with a small delay before starting
+        time_per_char = word_duration / max(1, len(word.text))
+        elapsed = current_time - word.timestamp
+        # REVEAL_SPSION = 0.05
+        # if elapsed < 0:
+        #     chars_to_reveal = 0
+        # elif elapsed < REVEAL_SPSION:
+        #     chars_to_reveal = 0
+        # else:
+        #     chars_to_reveal = int(((elapsed - REVEAL_SPSION) / time_per_char)) + 1
+        # chars_to_reveal = max(0, min(len(word.text), chars_to_reveal))
+
+        # Ver: 4.0: Use a ratio.
+        ratio = temp_ratio
+        chars_to_reveal = math.floor(elapsed / time_per_char - ratio) + 1
+        chars_to_reveal = max(0, min(len(word.text), chars_to_reveal))
+
 
         # Split the word into revealed and unrevealed parts
         revealed_part = word.text[:chars_to_reveal]
@@ -764,7 +864,7 @@ class MusicPlayer:
             f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}",
             header_line,
             f"{Fore.YELLOW}🎵 Now Playing: {song_name}{Style.RESET_ALL}",
-            f"{Fore.MAGENTA}{status} |{Fore.BLUE}📀 Track {self.current_song_index + 1} of {len(self.playlist)} | Lrc {lrc_pos} of {lrc_total} | Time: {current_min:02d}:{current_sec:05.2f}{Style.RESET_ALL}",
+            f"{Fore.MAGENTA}{status} |{Fore.BLUE}📀 {self.current_song_index + 1} of {len(self.playlist)} | LRC {lrc_pos} of {lrc_total} | Time: {current_min:02d}:{current_sec:05.2f}{Style.RESET_ALL}",
             f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}",
             "",
         ]
@@ -835,8 +935,7 @@ class MusicPlayer:
             last_display_time = 0
 
             # Start input handler thread AFTER is_playing is True
-            input_thread = threading.Thread(target=self.handle_input, daemon=True)
-            input_thread.start()
+            self._start_input_thread()
 
             # Main display loop
             while self.is_playing:
@@ -878,7 +977,11 @@ class MusicPlayer:
                     last_display_time = current_time
 
                 # Check if song finished
-                if not pygame.mixer.music.get_busy() and not self.is_paused:
+                if (
+                    not self.is_paused
+                    and not pygame.mixer.music.get_busy()
+                    and (time.time() - self._last_seek_at) > 0.5  # ignore brief gap right after seek
+                ):
                     self.is_playing = False  # Mark as finished naturally
                     break
 
@@ -887,10 +990,16 @@ class MusicPlayer:
         except Exception as e:
             print(f"Error playing {song_path.name}: {e}")
         finally:
+            # Ensure input thread for this song is stopped before returning
+            self._stop_input_thread(join=True)
             self.show_cursor()  # Always restore cursor when done
 
     def handle_input(self):
         """Handle keyboard input in a separate thread"""
+        stop_event = self._input_thread_stop
+        if stop_event is None:
+            # Nothing to do; defensive guard
+            return True
         def _read_key_event() -> Optional[str]:
             """Translate msvcrt byte sequences to high-level keys; ignore combos/modifiers."""
             if not msvcrt.kbhit():
@@ -922,8 +1031,7 @@ class MusicPlayer:
             if ord(ch) < 32:
                 return None
             return ch.lower()
-
-        while self.is_playing:
+        while self.is_playing and not stop_event.is_set():
             try:
                 key = _read_key_event()
                 if key is None:
@@ -1046,6 +1154,8 @@ class MusicPlayer:
         finally:
             pygame.mixer.music.stop()
             pygame.mixer.quit()
+            # Final safety: ensure input thread is stopped on exit
+            self._stop_input_thread(join=True)
             self.show_cursor()  # Restore cursor on exit
 
 
