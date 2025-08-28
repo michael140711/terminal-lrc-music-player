@@ -2,7 +2,7 @@
 lrc-player
 """
 temp_ratio = 0.15
-version = f"3.9.0-alpha-wordV4-{temp_ratio*100:.0f}%/deek-fix-2"
+version = f"3.9.5"
 author = "Michael"
 
 import os
