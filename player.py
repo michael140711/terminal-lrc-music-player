@@ -10,9 +10,8 @@ from pathlib import Path
 SUPPORTED_EXTS = {".flac", ".ogg", ".aac", ".mp3"}
 SONGS_DIRNAME = "songs"
 
-# Config files
-USER_CFG_FILENAME = "player.cfg"  # persists user settings
-NOWPLAYING_CFG_FILENAME = "player-nowplaying.cfg"  # consumed by lrc-player.py
+# Single config/nowplaying file (settings + playlist)
+NOWPLAYING_CFG_FILENAME = "player.cfg"
 
 
 class Settings:
@@ -23,30 +22,51 @@ class Settings:
 
 	@staticmethod
 	def load(path: Path) -> "Settings":
+		"""Load settings from player-nowplaying.cfg.
+		- Shuffle and Playlist from [Player]
+		- Audio delay from [BlueTooth Audio Offset]/Offset
+		"""
 		if not path.exists():
-			# Defaults when no config exists yet
 			return Settings()
+		# We'll parse minimally via ConfigParser for the [Player] and [BlueTooth Audio Offset] keys.
 		cp = ConfigParser()
+		# Preserve case of keys? Not necessary, we access by exact names; ConfigParser lowercases option names by default.
 		try:
 			with path.open("r", encoding="utf-8") as f:
 				cp.read_file(f)
 		except Exception:
-			# If file is malformed, fallback to defaults
 			return Settings()
-		shuffle = cp.getboolean("Player", "Shuffle", fallback=False)
-		playlist = cp.get("Player", "Playlist", fallback="All songs")
-		audio_delay = cp.getfloat("Player", "AudioDelay", fallback=0.0)
+		shuffle = cp.getboolean("Player", "shuffle", fallback=cp.getboolean("Player", "Shuffle", fallback=False))
+		playlist = cp.get("Player", "playlist", fallback=cp.get("Player", "Playlist", fallback="All songs"))
+		# Audio delay lives in BlueTooth section
+		try:
+			audio_delay = cp.getfloat("BlueTooth Audio Offset", "offset")
+		except Exception:
+			# Try capitalized key as in examples
+			try:
+				audio_delay = cp.getfloat("BlueTooth Audio Offset", "Offset")
+			except Exception:
+				audio_delay = 0.0
 		return Settings(shuffle=shuffle, playlist=playlist, audio_delay=audio_delay)
 
-	def save(self, path: Path) -> None:
-		cp = ConfigParser()
-		cp["Player"] = {
-			"Shuffle": "true" if self.shuffle else "false",
-			"Playlist": self.playlist,
-			"AudioDelay": f"{self.audio_delay:.2f}",
-		}
+	def save(self, path: Path, *, playlist_lines: list[str] | None = None) -> None:
+		"""Persist settings into player-nowplaying.cfg.
+		Writes [Player], [BlueTooth Audio Offset], then [Playlist] (optional if provided).
+		"""
+		lines: list[str] = []
+		lines.append("[Player]")
+		lines.append(f"shuffle = {'true' if self.shuffle else 'false'}")
+		lines.append(f"playlist = {self.playlist if self.playlist.strip() else 'All songs'}")
+		lines.append("")
+		lines.append("[BlueTooth Audio Offset]")
+		lines.append(f"Offset = {self.audio_delay:.2f}")
+		lines.append("")
+		lines.append("[Playlist]")
+		if playlist_lines:
+			lines.extend(playlist_lines)
+		content = "\n".join(lines) + "\n"
 		with path.open("w", encoding="utf-8") as f:
-			cp.write(f)
+			f.write(content)
 
 
 def list_audio_files(songs_dir: Path) -> list[Path]:
@@ -69,7 +89,7 @@ def prompt(msg: str) -> str:
 
 
 def menu_main(base_dir: Path):
-	cfg_path = base_dir / USER_CFG_FILENAME
+	cfg_path = base_dir / NOWPLAYING_CFG_FILENAME
 	settings = Settings.load(cfg_path)
 	while True:
 		clear_screen()
@@ -107,11 +127,11 @@ def menu_main(base_dir: Path):
 			print("Feature not yet available.\n")
 			prompt("Press Enter to go back...")
 		elif choice == "9":
-			# Settings menu (updates and persists)
+			# Settings menu (in-memory only; persist on run or exit)
 			menu_settings(base_dir, settings)
-			# Re-load in case file was changed externally
-			settings = Settings.load(cfg_path)
 		elif choice == "0":
+			# Save current settings into nowplaying file, preserving existing playlist if present
+			persist_settings_only(base_dir, settings)
 			clear_screen()
 			print("Bye.")
 			return
@@ -121,7 +141,6 @@ def menu_main(base_dir: Path):
 
 
 def menu_settings(base_dir: Path, settings: Settings) -> None:
-	cfg_path = base_dir / USER_CFG_FILENAME
 	while True:
 		clear_screen()
 		print("== Update Settings ==")
@@ -132,15 +151,12 @@ def menu_settings(base_dir: Path, settings: Settings) -> None:
 		sel = prompt("Select: ").strip()
 		if sel == "1":
 			settings.shuffle = not settings.shuffle
-			# persist immediately
-			settings.save(cfg_path)
 		elif sel == "2":
 			val = prompt("Enter delay in seconds (e.g., 1.23): ").strip()
 			try:
 				num = float(val)
 				# Clamp to sensible range if desired (optional); keep as is for now
 				settings.audio_delay = round(num, 2)
-				settings.save(cfg_path)
 			except ValueError:
 				# Just ignore invalid input and repaint
 				pass
@@ -151,15 +167,21 @@ def menu_settings(base_dir: Path, settings: Settings) -> None:
 			pass
 
 
-def generate_nowplaying(base_dir: Path, song_names: list[str], audio_delay: float) -> Path:
-	"""Create player-nowplaying.cfg following the provided sample format."""
+def generate_nowplaying(base_dir: Path, settings: Settings, song_names: list[str]) -> Path:
+	"""Create player-nowplaying.cfg with [Player], [BlueTooth Audio Offset], and [Playlist]."""
 	cfg_path = base_dir / NOWPLAYING_CFG_FILENAME
-	lines = []
-	lines.append("[BlueTooth Audio Offset]")
-	lines.append(f"Offset = {audio_delay:.2f}")
+	lines: list[str] = []
+	# [Player]
+	lines.append("[Player]")
+	lines.append(f"shuffle = {'true' if settings.shuffle else 'false'}")
+	lines.append(f"playlist = {settings.playlist if settings.playlist.strip() else 'All songs'}")
 	lines.append("")
+	# [BlueTooth Audio Offset]
+	lines.append("[BlueTooth Audio Offset]")
+	lines.append(f"Offset = {settings.audio_delay:.2f}")
+	lines.append("")
+	# [Playlist]
 	lines.append("[Playlist]")
-	# Write one filename per line as-is (relative to songs directory)
 	lines.extend(song_names)
 	content = "\n".join(lines) + "\n"
 	with cfg_path.open("w", encoding="utf-8") as f:
@@ -184,12 +206,43 @@ def run_with_settings(base_dir: Path, settings: Settings) -> None:
 		songs = build_song_list(base_dir)
 	if settings.shuffle:
 		random.shuffle(songs)
-	cfg_path = generate_nowplaying(base_dir, songs, settings.audio_delay)
+	# Persist full nowplaying (settings + playlist) before launching
+	cfg_path = generate_nowplaying(base_dir, settings, songs)
 	# Launch lrc-player.py
 	clear_screen()
 	print(f"Starting player with {len(songs)} song(s). Now playing config: {cfg_path.name}")
 	# Defer to main to actually spawn the process via terminal if desired
 	launch_lrc_player(base_dir)
+
+
+def _read_existing_playlist(base_dir: Path) -> list[str]:
+	"""Read any existing [Playlist] entries from player-nowplaying.cfg if present."""
+	cfg_path = base_dir / NOWPLAYING_CFG_FILENAME
+	if not cfg_path.exists():
+		return []
+	try:
+		with cfg_path.open("r", encoding="utf-8") as f:
+			lines = f.read().splitlines()
+	except Exception:
+		return []
+	playlist_lines: list[str] = []
+	in_playlist = False
+	for line in lines:
+		if line.strip().startswith("[") and line.strip().endswith("]"):
+			in_playlist = (line.strip() == "[Playlist]")
+			continue
+		if in_playlist:
+			if line.strip() == "":
+				# keep blank lines out of playlist
+				continue
+			playlist_lines.append(line)
+	return playlist_lines
+
+
+def persist_settings_only(base_dir: Path, settings: Settings) -> None:
+	"""Save only [Player] and [BlueTooth Audio Offset], preserving [Playlist] content if any."""
+	existing_playlist = _read_existing_playlist(base_dir)
+	settings.save(base_dir / NOWPLAYING_CFG_FILENAME, playlist_lines=existing_playlist)
 
 
 def launch_lrc_player(base_dir: Path) -> None:
