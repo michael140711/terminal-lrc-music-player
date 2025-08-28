@@ -28,25 +28,40 @@ class Settings:
 		"""
 		if not path.exists():
 			return Settings()
-		# We'll parse minimally via ConfigParser for the [Player] and [BlueTooth Audio Offset] keys.
-		cp = ConfigParser()
-		# Preserve case of keys? Not necessary, we access by exact names; ConfigParser lowercases option names by default.
+		# Allow playlist lines without '=' and parse sections safely
+		cp = ConfigParser(allow_no_value=True)
 		try:
 			with path.open("r", encoding="utf-8") as f:
 				cp.read_file(f)
 		except Exception:
 			return Settings()
-		shuffle = cp.getboolean("Player", "shuffle", fallback=cp.getboolean("Player", "Shuffle", fallback=False))
-		playlist = cp.get("Player", "playlist", fallback=cp.get("Player", "Playlist", fallback="All songs"))
-		# Audio delay lives in BlueTooth section
-		try:
-			audio_delay = cp.getfloat("BlueTooth Audio Offset", "offset")
-		except Exception:
-			# Try capitalized key as in examples
-			try:
-				audio_delay = cp.getfloat("BlueTooth Audio Offset", "Offset")
-			except Exception:
-				audio_delay = 0.0
+		# Defaults
+		shuffle = False
+		playlist = "All songs"
+		audio_delay = 0.0
+		# Player section
+		if cp.has_section("Player"):
+			# option names are case-insensitive
+			if cp.has_option("Player", "shuffle"):
+				try:
+					shuffle = cp.getboolean("Player", "shuffle")
+				except Exception:
+					pass
+			if cp.has_option("Player", "playlist"):
+				try:
+					playlist = cp.get("Player", "playlist") or "All songs"
+				except Exception:
+					pass
+		# BlueTooth Audio Offset section
+		if cp.has_section("BlueTooth Audio Offset"):
+			# option names are case-insensitive
+			for key in ("offset", "Offset"):
+				if cp.has_option("BlueTooth Audio Offset", key):
+					try:
+						audio_delay = cp.getfloat("BlueTooth Audio Offset", key)
+						break
+					except Exception:
+						pass
 		return Settings(shuffle=shuffle, playlist=playlist, audio_delay=audio_delay)
 
 	def save(self, path: Path, *, playlist_lines: list[str] | None = None) -> None:
@@ -94,9 +109,9 @@ def menu_main(base_dir: Path):
 	while True:
 		clear_screen()
 		print("== Player Settings ==")
-		print(f"🔀shuffle: {'ON' if settings.shuffle else 'OFF'}")
-		print(f"📜Playlist: {settings.playlist if settings.playlist.strip() else 'All songs'}")
-		print(f"🛜Audio Delay: {settings.audio_delay:.2f}s")
+		print(f"🔀 shuffle: {'ON' if settings.shuffle else 'OFF'}")
+		print(f"📜 Playlist: {settings.playlist if settings.playlist.strip() else 'All songs'}")
+		print(f"🛜  Audio Delay: {settings.audio_delay:.2f}s")
 		print("")
 		print("== Player Menu ==")
 		print(" 1. Run")
