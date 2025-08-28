@@ -1,16 +1,3 @@
-"""player.py
-
-Interactive console menu for preparing audio playback.
-
-What's new:
-- Clear screen on each page and only show current content.
-- Show current player settings at the top of the main menu.
-- Persist settings in player.cfg (Shuffle, Playlist, Audio Delay).
-- "Run" creates player-nowplaying.cfg matching sample format and starts lrc-player.py.
-- "Play All" runs with all songs (ignoring playlist selection), same as Run otherwise.
-
-Supported audio extensions: .flac, .ogg, .aac, .mp3
-"""
 
 from __future__ import annotations
 
@@ -206,19 +193,28 @@ def run_with_settings(base_dir: Path, settings: Settings) -> None:
 
 
 def launch_lrc_player(base_dir: Path) -> None:
-	# We simply execute the Python script; rely on user's environment PATH
-	# Use os.system for a simple handoff
-	script_path = base_dir / "lrc-player.py"
-	if not script_path.exists():
-		print("lrc-player.py not found.")
-		prompt("Press Enter to return...")
-		return
-	# On Windows cmd/powershell, this will run and return when process exits
-	exit_code = os.system(f'"{sys.executable}" "{script_path}"')
-	if exit_code != 0:
-		print(f"lrc-player exited with code {exit_code}")
-		prompt("Press Enter to return...")
+    # We simply execute the Python script using subprocess (no shell) to avoid cmd quoting issues
+    import subprocess
 
+    script_path = base_dir / "lrc-player.py"
+    if not script_path.exists():
+        print("lrc-player.py not found.")
+        prompt("Press Enter to return...")
+        return
+
+    try:
+        # Run with the same interpreter; no shell => no cmd quoting problems
+        result = subprocess.run(
+            [sys.executable, str(script_path)],
+            cwd=str(base_dir),
+            check=False
+        )
+        if result.returncode != 0:
+            print(f"lrc-player exited with code {result.returncode}")
+            prompt("Press Enter to return...")
+    except Exception as e:
+        print(f"Failed to start lrc-player: {e}")
+        prompt("Press Enter to return...")
 
 def main():
 	base_dir = Path(__file__).resolve().parent
