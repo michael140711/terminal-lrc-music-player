@@ -34,7 +34,7 @@ except ImportError:
     class Style:
         DIM = NORMAL = BRIGHT = RESET_ALL = ""
 
-CFG_FILENAME = "player-temp.cfg"
+CFG_FILENAME = "player-nowplaying.cfg"
 SONGS_DIRNAME = "songs"
 LYRICS_LINE_SWITCHING_ON_END = True # Whether to switch to next line when the current line ends
 
