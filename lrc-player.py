@@ -2,7 +2,7 @@
 lrc-player
 """
 temp_ratio = 0.15
-version = f"3.9.5"
+version = f"3.10.0"
 author = "Michael"
 
 import os
@@ -34,7 +34,7 @@ except ImportError:
     class Style:
         DIM = NORMAL = BRIGHT = RESET_ALL = ""
 
-CFG_FILENAME = "player-temp.cfg"
+CFG_FILENAME = "player.cfg"
 SONGS_DIRNAME = "songs"
 LYRICS_LINE_SWITCHING_ON_END = True # Whether to switch to next line when the current line ends
 
