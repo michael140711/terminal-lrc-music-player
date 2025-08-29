@@ -20,13 +20,13 @@ YELLOW = "\033[33m"
 CYAN = "\033[36m"
 RESET = "\033[0m"
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 LYRICS_DIR = ROOT / "lyrics"
 SONGS_DIR = ROOT / "lyrics"
-CFG_PATH = ROOT / "applem-convert.cfg"
+CFG_PATH = ROOT / "applem-tools" / "applem-convert.cfg"
 
 # Load converter functions from script with a non-importable filename
-CONVERTER_PATH = ROOT / "applem-convert-ttml-to-lrc.py"
+CONVERTER_PATH = ROOT / "applem-tools" / "applem-convert-ttml-to-lrc.py"
 mod = runpy.run_path(str(CONVERTER_PATH))
 convert_ttml_to_elrc = mod["convert_ttml_to_elrc"]
 coerce_to_ttml_input = mod["coerce_to_ttml_input"]
