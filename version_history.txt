@@ -1,15 +1,24 @@
-3.9.5 8/28/2025 3:40 PM
-Finally fixed the highlighting logic- after tried a couple different version, then realized that bluetooth could be the one causing
-delays and everything.
+3.9.5-a 8/29/2025 8:48 AM
+ Player.py updates
+ Major Update to player.py
+ - update more menu option and settings page
+ - update so it would actually call lrc-player.py
+ - added shuffle option
+ - add support for bluetooth audio delay tag.
+ and a couple minot bug fix
 
-- Now it will highlight a character at 15% (can be configured) in between the timestamps
-- Now it will read a bluetooth audio delay in cfg file (player.py will be updated in next branch for this feature)
-- Fixed an issue where there is a fixed time for highlighting delay. We don't want make delays just because it seems unnatural,
+3.9.5 8/28/2025 3:40 PM
+ Finally fixed the highlighting logic- after tried a couple different version, then realized that bluetooth could be the one causing
+ delays and everything.
+
+ - Now it will highlight a character at 15% (can be configured) in between the timestamps
+ - Now it will read a bluetooth audio delay in cfg file (player.py will be updated in next branch for this feature)
+ - Fixed an issue where there is a fixed time for highlighting delay. We don't want make delays just because it seems unnatural,
   we want to fix the problem instead.
 
-Seeking Fix - there are some seeking fix that shouldn't be in this branch however fixed in this branch.
-- fixed an issue where multiple threading happening when automatically ends a song and goes to next song
-- fixed an issue where sometime seeking would jump to next song due to pygame's audio limitation, where getBusy() would return
+ Seeking Fix - there are some seeking fix that shouldn't be in this branch however fixed in this branch.
+ - fixed an issue where multiple threading happening when automatically ends a song and goes to next song
+ - fixed an issue where sometime seeking would jump to next song due to pygame's audio limitation, where getBusy() would return
   false when during seeking,which in this case seeking is just stop the audio then replays it at certain timestamp. This would
   cause system thinking song ends occasionally during seeking.
 
