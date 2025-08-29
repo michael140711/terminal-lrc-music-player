@@ -167,7 +167,16 @@ def menu_settings(base_dir: Path, settings: Settings) -> None:
 		if sel == "1":
 			settings.shuffle = not settings.shuffle
 		elif sel == "2":
-			val = prompt("Enter delay in seconds (e.g., 1.23): ").strip()
+			clear_screen()
+			print("== Settings: Bluetooth Audio Delay Settings ==")
+			print(f"Current value: {settings.audio_delay:.2f}s")
+			print("")
+			print("Delays are usually caused by Bluetooth audio devices, and some other factors.")
+			print("This value will be calculated when displaying word-by-word lyrics.")
+			print("")
+			print("(Click Enter to Save or Go Back)")
+			print("")
+			val = prompt("Enter new delay (in seconds): ").strip()
 			try:
 				num = float(val)
 				# Clamp to sensible range if desired (optional); keep as is for now
