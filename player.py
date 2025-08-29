@@ -11,7 +11,7 @@ SUPPORTED_EXTS = {".flac", ".ogg", ".aac", ".mp3"}
 SONGS_DIRNAME = "songs"
 
 # Single config/nowplaying file (settings + playlist)
-NOWPLAYING_CFG_FILENAME = "player.cfg"
+NOWPLAYING_CFG_FILENAME = "player-config.cfg"
 
 
 class Settings:
