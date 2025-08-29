@@ -90,7 +90,7 @@ async def pause_for_login() -> None:
     print("2) After successful login return here and press ENTER.")
     await asyncio.get_event_loop().run_in_executor(None, input, "Press ENTER to continue: ")
 
-async def get_tokens_with_retry(page, attempts: int = 6, delay_ms: int = 1500):
+async def get_tokens_with_retry(page, attempts: int = 6, delay_ms: int = 15000):
     for i in range(1, attempts + 1):
         tokens = await page.evaluate(GET_TOKENS_JS)
         dev, usr = tokens.get("developerToken"), tokens.get("musicUserToken")

@@ -1,3 +1,13 @@
+PENDING UPDATE 8/29/2025 9:04 AM
+ 1. Get all songs in a playlist, then run get-playlist
+ 2. run parse playlist
+ 3. then run get syllable lyrics
+ 4. run convert-all-to-lrc
+ ----
+ 1. copy ttml lyrics from inspection from 🍏 music
+ 2. run convert-ttml-to-lrc
+ ----
+
 3.10.0 8/29/2025 8:48 AM
  Player.py updates
  Major Update to player.py

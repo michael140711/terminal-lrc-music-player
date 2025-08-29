@@ -140,6 +140,9 @@ async def main() -> None:
                     continue
 
                 url = LYRIC_API.format(catalog_id)
+
+                await asyncio.sleep(random.randint(DELAY_SECONDS_MIN, DELAY_SECONDS_MAX))
+
                 print(f"Fetching: {song_name} - {artist_name} | {url}")
                 final = await page.evaluate(
                     FETCH_JSON_JS,
@@ -161,7 +164,6 @@ async def main() -> None:
             except Exception as e:
                 print("Error processing row:", row)
                 print(e)
-            await asyncio.sleep(random.randint(DELAY_SECONDS_MIN, DELAY_SECONDS_MAX))
 
         if not use_persistent_context:
             await browser.close()

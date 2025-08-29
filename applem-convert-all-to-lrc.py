@@ -26,7 +26,7 @@ SONGS_DIR = ROOT / "lyrics"
 CFG_PATH = ROOT / "applem-convert.cfg"
 
 # Load converter functions from script with a non-importable filename
-CONVERTER_PATH = ROOT / "applem-convert-ttml-to-lrc.py.py"
+CONVERTER_PATH = ROOT / "applem-convert-ttml-to-lrc.py"
 mod = runpy.run_path(str(CONVERTER_PATH))
 convert_ttml_to_elrc = mod["convert_ttml_to_elrc"]
 coerce_to_ttml_input = mod["coerce_to_ttml_input"]
@@ -155,11 +155,11 @@ def output_names_for(p: Path, mode: str) -> list[tuple[Path, bool]]:
 	"""Return a list of (output_path, main_only_flag)."""
 	stem = p.stem
 	if mode == "main":
-		return [(SONGS_DIR / f"{stem} (main).lrc", True)]
+		return [(SONGS_DIR / f"{stem} 1-main.lrc", True)]
 	if mode == "both":
 		return [
-			(SONGS_DIR / f"{stem} (main).lrc", True),
-			(SONGS_DIR / f"{stem}.lrc", False),
+			(SONGS_DIR / f"{stem} 1-main.lrc", True),
+			(SONGS_DIR / f"{stem} 2-full.lrc", False),
 		]
 	# full
 	return [(SONGS_DIR / f"{stem}.lrc", False)]
