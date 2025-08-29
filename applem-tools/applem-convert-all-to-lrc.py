@@ -21,7 +21,7 @@ CYAN = "\033[36m"
 RESET = "\033[0m"
 
 ROOT = Path(__file__).resolve().parent.parent
-LYRICS_DIR = ROOT / "lyrics"
+LYRICS_DIR = ROOT / "lyrics-ttml-json"
 SONGS_DIR = ROOT / "lyrics"
 CFG_PATH = ROOT / "applem-tools" / "applem-convert.cfg"
 
@@ -113,7 +113,7 @@ def print_main_menu(files: list[Path], on_mask: list[bool], display_types: list[
 	print("0. settings")
 
 
-def run_settings(cfg: dict) -> None:
+def run_settings(cfg: dict, on_mask: list[bool]) -> None:
 	while True:
 		clear_console()
 		print(f"{CYAN}Settings{RESET}")
@@ -124,6 +124,8 @@ def run_settings(cfg: dict) -> None:
 		print(f"3. Filter Duplicates when 'Both' mode: {'ON' if fd else 'OFF'} (delete non-main if identical)")
 		rcs = cfg.get("replace_censored_stars", False)
 		print(f"4. Replace censored stars to 🥷 : {'ON' if rcs else 'OFF'}")
+		print(f"5. ALL ON — enable every file")
+		print(f"6. ALL OFF — disable every file")
 		print("---")
 		print("0. Back")
 		choice = input("> ").strip()
@@ -141,6 +143,14 @@ def run_settings(cfg: dict) -> None:
 		elif choice == "4":
 			cfg["replace_censored_stars"] = not cfg.get("replace_censored_stars", False)
 			save_cfg(cfg)
+		elif choice == "5":
+			# Turn ON all files
+			for i in range(len(on_mask)):
+				on_mask[i] = True
+		elif choice == "6":
+			# Turn OFF all files
+			for i in range(len(on_mask)):
+				on_mask[i] = False
 		else:
 			print("Unknown option. Use 1 to toggle mode, or 0 to go back.")
 
@@ -253,7 +263,7 @@ def main() -> None:
 		# 0 -> settings; (len(files)+1) -> run; numbers in [1..len(files)] toggle
 		if choice == "0":
 			_prev = cfg.get("disable_non_dt3", False)
-			run_settings(cfg)
+			run_settings(cfg, on_mask)
 			_new = cfg.get("disable_non_dt3", False)
 			if _prev != _new:
 				if _new:

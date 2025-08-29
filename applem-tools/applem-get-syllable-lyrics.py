@@ -13,7 +13,7 @@ MUSIC_HOME = "https://music.apple.com/"
 LYRIC_API = "https://amp-api.music.apple.com/v1/catalog/us/songs/{}/syllable-lyrics"
 
 CSV_FILE = Path("applem-tools/playlist.csv")
-LYRICS_DIR = Path("lyrics")
+LYRICS_DIR = Path("lyrics-ttml-json")
 DELAY_SECONDS_MIN = 3
 DELAY_SECONDS_MAX = 20
 
