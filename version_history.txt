@@ -1,0 +1,60 @@
+3.9.5 8/28/2025 3:40 PM
+Finally fixed the highlighting logic- after tried a couple different version, then realized that bluetooth could be the one causing
+delays and everything.
+
+- Now it will highlight a character at 15% (can be configured) in between the timestamps
+- Now it will read a bluetooth audio delay in cfg file (player.py will be updated in next branch for this feature)
+- Fixed an issue where there is a fixed time for highlighting delay. We don't want make delays just because it seems unnatural,
+  we want to fix the problem instead.
+
+Seeking Fix - there are some seeking fix that shouldn't be in this branch however fixed in this branch.
+- fixed an issue where multiple threading happening when automatically ends a song and goes to next song
+- fixed an issue where sometime seeking would jump to next song due to pygame's audio limitation, where getBusy() would return
+  false when during seeking,which in this case seeking is just stop the audio then replays it at certain timestamp. This would
+  cause system thinking song ends occasionally during seeking.
+
+
+3.9.0 8/22/2025 4:00 PM
+ version bump because I realized the lyric is not fully sync up partially because there is an audio delay using bluetooth
+
+ - Added logic for cfg.playlist file (player-temp.cfg) and added a tag for audio offset for bluetooth
+ - Added logic for player read the offset and take into the offset during animation.
+
+
+3.8.4
+ fixed an issue where multiple threads would show up if audio ends naturally.
+ fixed an issue where jumping would randomly happen during seeking using [←/→] button
+
+ Tried 4th version of displaying/animation logic, which would use a ratio to calculate when a character changes color.
+
+
+3.8.1 8/20/2025 5:01 PM
+ fixed an issue where animation would highlight the word during the middle time.
+ we want to start changing color right after the beginning time start-
+	since console can't animate half a character.
+
+ This fixed a bug where Chinese/Korean/Japanese type lyrics has a significant delay,
+ 	since their word is one character, not in letters.
+
+3.7.0 8/20/2025 10:51 AM
+update mulitple lyrics support using V. bumping version to 3.7.0
+
+
+3.6.5
+more seeking fex
+
+3.6.4 8/19/2025 11:12 am
+ merged with seeking fix - seeking fix at version 3.5.4. Seeking is now fixed.
+
+3.6.0 8/19/2025 9:31 AM
+ word-by-word duration is way to long for some of the words or the lyrics file itself that has incorrect timestamps.
+ added a calculated curve which set the max (L) to 2 second, and the curve value to 0.95.
+ This would shrink much more when the duration is much higher, using a non-linear calculation.
+
+3.5.2 8/18/2025 5:19 PM
+ fixed animation from fixed time to lyrics.
+
+
+lrc-player3.5.1 8/18/2025 10:26 AM
+Added seek support- it's a bit buggy where tapping mulitple times can cause it to crash or to next song.
+Updated the time to 2 decimal places for easier lyc file for word-by-word time/lyrics fixing.

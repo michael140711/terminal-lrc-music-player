@@ -26,3 +26,6 @@ xsongs/
 *.log
 *.txt
 *.csv
+
+#files in exceptions
+!version_history.txt
