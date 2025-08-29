@@ -12,12 +12,12 @@ from playwright.async_api import async_playwright
 MUSIC_HOME = "https://music.apple.com/"
 LYRIC_API = "https://amp-api.music.apple.com/v1/catalog/us/songs/{}/syllable-lyrics"
 
-CSV_FILE = Path("playlist.csv")
+CSV_FILE = Path("applem-tools/playlist.csv")
 LYRICS_DIR = Path("lyrics")
 DELAY_SECONDS_MIN = 3
 DELAY_SECONDS_MAX = 20
 
-STATE_FILE = Path("state.json")
+STATE_FILE = Path("applem-tools/state.json")
 use_persistent_context = False
 USER_DATA_DIR = "user-data"
 

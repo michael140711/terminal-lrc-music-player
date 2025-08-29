@@ -5,8 +5,8 @@ import csv
 import json
 from pathlib import Path
 
-PLAYLIST_JSON = Path("playlist.json")
-OUTPUT_CSV = Path("playlist.csv")
+PLAYLIST_JSON = Path("applem-tools/playlist.json")
+OUTPUT_CSV = Path("applem-tools/playlist.csv")
 
 def _extract_songs(data: dict) -> list:
     """

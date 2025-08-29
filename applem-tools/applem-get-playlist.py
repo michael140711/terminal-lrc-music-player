@@ -39,8 +39,8 @@ PLAYLIST_QUERY = {
     "relate": "catalog",
 }
 
-STATE_FILE = Path("state.json")
-TOKENS_FILE = Path("tokens.json")
+STATE_FILE = Path("applem-tools/state.json")
+TOKENS_FILE = Path("applem-tools/tokens.json")
 use_persistent_context = False
 USER_DATA_DIR = "user-data"
 
