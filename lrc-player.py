@@ -717,11 +717,12 @@ class MusicPlayer:
 
         # # 指数衰减曲线/指数饱和函数 Shrink the word duration when the duration is way too long, using a curve to scale it down
         # # https://asset-cdn.uscardforum.com/original/4X/3/d/9/3d9d969d8f021d34ad5cf32a21b6f1439ec9118c.png
-        L = 5.0 # max duration for compression
-        Curve = 1.0  # Compression factor
-        compressed = L * (1 - math.exp(-word_duration / L * Curve))
-        word_duration = min(word_duration, compressed)
-        word_duration = max(0.05, word_duration)  # Ensure minimum duration
+        # L = 5.0 # max duration for compression
+        # Curve = 1.0  # Compression factor
+        # compressed = L * (1 - math.exp(-word_duration / L * Curve))
+        # word_duration = min(word_duration, compressed)
+        # word_duration = max(0.05, word_duration)  # Ensure minimum duration
+        #### REMOVED - AM歌词不需要压缩, 删除后更准确
 
         # word_progress = min(1.0, max(0.0, (current_time - word.timestamp) / word_duration))
 
