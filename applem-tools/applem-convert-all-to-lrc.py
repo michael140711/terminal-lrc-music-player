@@ -12,6 +12,7 @@ import sys
 import runpy
 from pathlib import Path
 import os
+import subprocess
 
 # ANSI colors (basic). On modern Windows terminals, ANSI is supported.
 RED = "\033[31m"
@@ -39,7 +40,15 @@ def load_cfg() -> dict:
 		except Exception:
 			pass
 	# default: Only Full Lyrics
-	return {"mode": "full", "disable_non_dt3": False, "filter_duplicates": False, "replace_censored_stars": False}  # one of: main, both, full
+	return {
+		"mode": "full",  # one of: main, both, full
+		"disable_non_dt3": False,
+		"filter_duplicates": False,
+		"replace_censored_stars": False,
+		# New settings
+		"run_offset_tune": False,
+		"offset_backup": False,
+	}
 
 
 def save_cfg(cfg: dict) -> None:
@@ -126,6 +135,10 @@ def run_settings(cfg: dict, on_mask: list[bool]) -> None:
 		print(f"4. Replace censored stars to 🥷 : {'ON' if rcs else 'OFF'}")
 		print(f"5. ALL ON — enable every file")
 		print(f"6. ALL OFF — disable every file")
+		rot = cfg.get("run_offset_tune", False)
+		print(f"7. Run Offset Tune: {'ON' if rot else 'OFF'}")
+		ob = cfg.get("offset_backup", False)
+		print(f"8. Offset Back-Up: {'ON' if ob else 'OFF'}")
 		print("---")
 		print("0. Back")
 		choice = input("> ").strip()
@@ -151,6 +164,12 @@ def run_settings(cfg: dict, on_mask: list[bool]) -> None:
 			# Turn OFF all files
 			for i in range(len(on_mask)):
 				on_mask[i] = False
+		elif choice == "7":
+			cfg["run_offset_tune"] = not cfg.get("run_offset_tune", False)
+			save_cfg(cfg)
+		elif choice == "8":
+			cfg["offset_backup"] = not cfg.get("offset_backup", False)
+			save_cfg(cfg)
 		else:
 			print("Unknown option. Use 1 to toggle mode, or 0 to go back.")
 
@@ -186,7 +205,40 @@ def _postprocess_output(path: Path, replace_censored_stars: bool) -> None:
 		print(f"{YELLOW}Post-process failed for {path.name}: {e}{RESET}")
 
 
-def convert_selected(files: list[Path], on_mask: list[bool], mode: str, filter_duplicates: bool = False, replace_censored_stars: bool = False) -> None:
+def _run_offset_tune(path: Path, in_place: bool) -> None:
+	"""Run the offset tuning script on a single LRC file.
+	- If in_place is False, pass -o with the same path to overwrite the file.
+	- If in_place is True, pass --in-place and let the script create a backup.
+	"""
+	try:
+		script = ROOT / "update-lrc-offset.py"
+		if not script.exists():
+			print(f"{YELLOW}Offset tune skipped; script not found: {script}{RESET}")
+			return
+		if in_place:
+			args = [sys.executable, str(script), str(path), "--in-place"]
+		else:
+			args = [sys.executable, str(script), str(path), "-o", str(path)]
+		# Run and wait; hide window creation specifics, rely on returncode
+		res = subprocess.run(args, capture_output=True, text=True)
+		if res.returncode == 0:
+			print(f"Offset tuned: {path.name} ({'--in-place' if in_place else '-o same'})")
+		else:
+			err = (res.stderr or res.stdout or '').strip()
+			print(f"{YELLOW}Offset tune failed for {path.name}: {err}{RESET}")
+	except Exception as e:
+		print(f"{YELLOW}Offset tune error for {path.name}: {e}{RESET}")
+
+
+def convert_selected(
+	files: list[Path],
+	on_mask: list[bool],
+	mode: str,
+	filter_duplicates: bool = False,
+	replace_censored_stars: bool = False,
+	run_offset_tune: bool = False,
+	offset_backup: bool = False,
+) -> None:
 	total = 0
 	ok = 0
 	for p, on in zip(files, on_mask):
@@ -226,6 +278,12 @@ def convert_selected(files: list[Path], on_mask: list[bool], mode: str, filter_d
 								print(f"{RED}Tried to delete duplicate file {full_path.name} but failed: {del_err}{RESET}")
 			except Exception as cmp_err:
 				print(f"{RED}Comparison failed for '{p.name}': {cmp_err}{RESET}")
+
+			# Run offset tune after dedupe on remaining files
+			if run_offset_tune:
+				for out_path, _is_main, success in results:
+					if success and out_path.exists():
+						_run_offset_tune(out_path, in_place=offset_backup)
 		else:
 			for out_path, main_only in output_names_for(p, mode):
 				total += 1
@@ -235,6 +293,9 @@ def convert_selected(files: list[Path], on_mask: list[bool], mode: str, filter_d
 					_postprocess_output(out_path, replace_censored_stars)
 					print(f"Wrote {out_path}")
 					ok += 1
+					# Run offset tune per file if enabled
+					if run_offset_tune:
+						_run_offset_tune(out_path, in_place=offset_backup)
 				except Exception as e:
 					print(f"{RED}Failed to convert {p.name} → {out_path.name}: {e}{RESET}")
 	print()
@@ -288,6 +349,8 @@ def main() -> None:
 					cfg.get("mode", "full"),
 					cfg.get("filter_duplicates", False),
 					cfg.get("replace_censored_stars", False),
+					cfg.get("run_offset_tune", False),
+					cfg.get("offset_backup", False),
 				)
 				break
 			if 1 <= idx <= len(files):
