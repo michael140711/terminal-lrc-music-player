@@ -173,6 +173,20 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 	out_text = process_lrc(text, units=args.units)
 
+	# Detect whether the file actually changes and whether the effective offset is zero
+	offset_is_zero = False
+	for line in text.splitlines():
+		m = OFFSET_LINE_RE.match(line)
+		if m:
+			try:
+				offset_is_zero = abs(parse_offset_seconds(m.group("val"), units=args.units)) < 1e-12
+			except Exception:
+				# On parse error, fall back to treating as non-zero to be safe
+				offset_is_zero = False
+			break
+
+	no_change = (out_text == text)
+
 	out_path = args.output
 	if out_path:
 		os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -182,14 +196,23 @@ def main(argv: Optional[list[str]] = None) -> int:
 		return 0
 
 	if args.in_place:
+		# If nothing would change, skip writing and don't create a backup
+		if no_change:
+			print("No changes detected; skipped in-place update.")
+			return 0
+
 		backup = in_path + ".bak"
 		try:
-			# Create a simple backup
-			with open(backup, "w", encoding="utf-8", newline="\n") as f:
-				f.write(text)
+			# Create a backup only when there's a non-zero offset (actual timestamp adjustments)
+			if not offset_is_zero:
+				with open(backup, "w", encoding="utf-8", newline="\n") as f:
+					f.write(text)
 			with open(in_path, "w", encoding="utf-8", newline="\n") as f:
 				f.write(out_text)
-			print(f"Updated in place. Backup saved to: {backup}")
+			if offset_is_zero:
+				print("Updated in place without creating a backup (offset is zero).")
+			else:
+				print(f"Updated in place. Backup saved to: {backup}")
 			return 0
 		except Exception as e:
 			print(f"Failed to write in place: {e}", file=sys.stderr)
