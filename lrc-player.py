@@ -2,7 +2,7 @@
 lrc-player
 """
 temp_ratio = 0.15
-version = f"3.10.0"
+version = f"3.10.1"
 author = "Michael"
 
 import os
@@ -369,24 +369,34 @@ class MusicPlayer:
 
     def normalize_filename(self, filename: str) -> str:
         """Normalize filename for better matching"""
-        # Convert to lowercase
+        # Convert to lowercase early
         normalized = filename.lower()
 
-        # Replace various separators with space
-        normalized = re.sub(r'[_\-\(\)\[\]]', ' ', normalized)
+        # Unify featuring separators before we drop punctuation:
+        # examples: "artist _ guest", "artist x guest", "artist ft. guest"
+        normalized = re.sub(r"\s[_xX]\s", " feat ", normalized)
+        normalized = re.sub(r"\b(feat\.?|featuring|ft\.?|with)\b", " feat ", normalized)
+
+        # Replace various separators with space (keep after unifying 'feat')
+        normalized = re.sub(r'[\-\(\)\[\]]', ' ', normalized)
+        # Keep underscore handling last to not lose the above patterning
+        normalized = re.sub(r'_+', ' ', normalized)
 
         # Remove extra information commonly found in LRC files
         # Remove BPM info (e.g., "- 209 -")
         normalized = re.sub(r'\s*-\s*\d{2,3}\s*-\s*', ' ', normalized)
 
-        # Remove "_qm" suffix
+        # Remove "_qm" suffix or trailing quality markers
         normalized = re.sub(r'\s*qm\s*$', '', normalized)
 
-        # Remove "explicit" tags
-        normalized = re.sub(r'\s*explicit\s*', ' ', normalized)
+        # Remove common release descriptors and editions
+        normalized = re.sub(r'\b(deluxe|remaster(ed)?|explicit|clean|radio|edit|version|main|full|mix|mono|stereo)\b', ' ', normalized)
 
-        # Remove "feat" variations
+        # Keep a single canonical 'feat' token for all variations
         normalized = re.sub(r'\s*feat[^a-z]*\s*', ' feat ', normalized)
+
+        # Collapse numbers that are likely section markers like "1-main", "2-full" into spaces
+        normalized = re.sub(r'\b\d+\b', ' ', normalized)
 
         # Normalize multiple spaces to single space
         normalized = re.sub(r'\s+', ' ', normalized)
@@ -402,31 +412,65 @@ class MusicPlayer:
         if not song_words or not lrc_words:
             return 0.0
 
-        # Check if the beginning of the LRC matches the song
-        matching_words = 0
-        min_length = min(len(song_words), len(lrc_words))
+        # A small set of words to ignore for overlap/subsequence comparisons
+        stop = {
+            'feat', 'featuring', 'ft', 'with', 'and', '&',
+            'explicit', 'clean', 'radio', 'edit', 'version', 'deluxe', 'remaster', 'remastered',
+            'main', 'full', 'mix'
+        }
 
-        for i in range(min_length):
-            if song_words[i] == lrc_words[i]:
-                matching_words += 1
-            else:
-                break
+        def prefix_score() -> float:
+            matching = 0
+            for sw, lw in zip(song_words, lrc_words):
+                if sw == lw:
+                    matching += 1
+                else:
+                    break
+            if matching == 0:
+                return 0.0
+            score = matching / len(song_words)
+            lrc_ratio = matching / max(1, len(lrc_words))
+            if lrc_ratio >= 0.5:
+                score += 0.1
+            return min(1.0, score)
 
-        # Calculate score based on:
-        # 1. How many words match from the beginning
-        # 2. What percentage of the song name is matched
-        if matching_words == 0:
-            return 0.0
+        def ordered_subsequence_score() -> float:
+            # Allow tokens of song_words to appear in order within lrc_words (not necessarily contiguous)
+            i = 0
+            j = 0
+            matched = 0
+            while i < len(song_words) and j < len(lrc_words):
+                if song_words[i] == lrc_words[j]:
+                    matched += 1
+                    i += 1
+                    j += 1
+                else:
+                    j += 1
+            return matched / len(song_words)
 
-        # Score is the percentage of song words that match
-        score = matching_words / len(song_words)
+        def overlap_score() -> float:
+            sw = [w for w in song_words if w not in stop]
+            lw = [w for w in lrc_words if w not in stop]
+            if not sw or not lw:
+                return 0.0
+            sset = set(sw)
+            lset = set(lw)
+            inter = len(sset & lset)
+            # Symmetric overlap
+            return 0.5 * (inter / len(sset)) + 0.5 * (inter / len(lset))
 
-        # Bonus if we match a significant portion of the LRC name too
-        lrc_match_ratio = matching_words / len(lrc_words)
-        if lrc_match_ratio >= 0.5:
-            score += 0.1  # Small bonus
+        p = prefix_score()
+        oseq = ordered_subsequence_score()
+        ovlp = overlap_score()
 
-        return min(1.0, score)
+        # Combine conservatively; keep range [0,1]
+        combined = max(p, oseq, ovlp)
+
+        # Small boost if first token (usually the title) matches
+        if song_words and lrc_words and song_words[0] == lrc_words[0]:
+            combined = min(1.0, combined + 0.1)
+
+        return combined
 
     def load_lyrics(self, song_path: Path) -> List[LyricLine]:
         """Load lyrics for the given song with support for partial name matching"""
@@ -625,7 +669,7 @@ class MusicPlayer:
                 # Currently singing word - animate character by character
                 # Compute dynamic duration using the gap to the next word; clamp to reasonable bounds
                 # to avoid flicker (too small) or sluggishness (too large).
-                min_dur, max_dur = 0.05, 2.5
+                # min_dur, max_dur = 0.05, 2.5
                 # Prefer explicit end timestamp when available
                 if word.end_timestamp is not None:
                     raw_duration = max(0.0, word.end_timestamp - word.timestamp)
@@ -651,7 +695,8 @@ class MusicPlayer:
                         else:
                             raw_duration = 0.5
 
-                duration = max(min_dur, min(max_dur, raw_duration if raw_duration > 0 else 0.5))
+                # duration = max(min_dur, min(max_dur, raw_duration if raw_duration > 0 else 0.5))
+                duration = raw_duration if raw_duration > 0 else 0.5
                 animated_word = self.animate_word_reveal(word, current_time, duration)
                 formatted_parts.append(animated_word)
             else:
@@ -672,11 +717,12 @@ class MusicPlayer:
 
         # # 指数衰减曲线/指数饱和函数 Shrink the word duration when the duration is way too long, using a curve to scale it down
         # # https://asset-cdn.uscardforum.com/original/4X/3/d/9/3d9d969d8f021d34ad5cf32a21b6f1439ec9118c.png
-        L = 2.0 # max duration for compression
-        Curve = 1  # Compression factor
-        compressed = L * (1 - math.exp(-word_duration / L * Curve))
-        word_duration = min(word_duration, compressed)
-        word_duration = max(0.05, word_duration)  # Ensure minimum duration
+        # L = 5.0 # max duration for compression
+        # Curve = 1.0  # Compression factor
+        # compressed = L * (1 - math.exp(-word_duration / L * Curve))
+        # word_duration = min(word_duration, compressed)
+        # word_duration = max(0.05, word_duration)  # Ensure minimum duration
+        #### REMOVED - AM歌词不需要压缩, 删除后更准确
 
         # word_progress = min(1.0, max(0.0, (current_time - word.timestamp) / word_duration))
 

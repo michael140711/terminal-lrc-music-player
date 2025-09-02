@@ -8,6 +8,11 @@ PENDING UPDATE 8/29/2025 9:04 AM
  2. run convert-ttml-to-lrc
  ----
 
+3.10.1
+ - Removed a set a minimun/max for timestamp duration.
+ - Update the L factor (max) to 5 seconds
+ - Add lyrics matches for incompleted matches: like (feat. xxx) could be shown in lyrics or song names. Now it would reconized it
+
 3.10.0 8/29/2025 8:48 AM
  Player.py updates
  Major Update to player.py
