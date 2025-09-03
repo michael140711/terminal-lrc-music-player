@@ -1157,6 +1157,14 @@ class MusicPlayer:
                         self.header_notification_color = Fore.RED
                     continue
 
+                ### Experimental features - disabled for now - lyrics delay adjustment ###
+                # if key == ']':  # delay lyrics by +50 ms
+                #     self.lyric_delay = round(self.lyric_delay + 0.05, 3)
+                #     # self.show_message(f"Lyrics delay: {self.lyric_delay:+.3f}s")
+                # elif key == '[':  # advance lyrics by -50 ms
+                #     self.lyric_delay = round(self.lyric_delay - 0.05, 3)
+                #     # self.show_message(f"Lyrics delay: {self.lyric_delay:+.3f}s")
+
                 # Ignore anything else
             except (UnicodeDecodeError, KeyboardInterrupt):
                 pass
