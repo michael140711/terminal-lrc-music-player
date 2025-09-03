@@ -1,4 +1,13 @@
-3.10.1 
+3.10.3 9/3/2025 12:14 PM
+ - fixed a major bug (issue #20) where lrc-player would have lyric run faster than the audio, especially when
+   there are longer lyrics needed to parse.
+   Now it would re-adjust the time after everything is loaded properly.
+
+3.10.2
+ - update player.py with more menu option, now playlist function is available!!
+ - update player.py with more menu option, where it can run it directly or run it shuffle.
+
+3.10.1
  - Removed a set a minimun/max for timestamp duration.
  - Update the L factor (max) to 5 seconds
  - Add lyrics matches for incompleted matches: like (feat. xxx) could be shown in lyrics or song names. Now it would reconized it
