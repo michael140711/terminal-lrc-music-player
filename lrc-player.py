@@ -199,6 +199,8 @@ class MusicPlayer:
         # Input thread management (ensure only one handler is active)
         self._input_thread = None
         self._input_thread_stop = None
+        # One-shot initial resync flag
+        self._needs_initial_resync = False
 
     # Initialize pygame mixer
     pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
@@ -871,6 +873,23 @@ class MusicPlayer:
                 # best-effort: do not alter timing further
                 return
 
+    def _resync_clock_to_audio(self):
+        """Align our start_time to the mixer clock (fixes startup buffering latency)."""
+        try:
+            pos_ms = pygame.mixer.music.get_pos()
+            if pos_ms >= 0:
+                now = time.time()
+                # Align wall-clock start so get_playback_position == mixer position
+                self.start_time = now - (pos_ms / 1000.0)
+                # We realign the absolute clock; keep pause/seek accumulators clean
+                # since we just started the track.
+                self.total_pause_time = 0.0
+                self.seek_offset = 0.0
+                self._needs_initial_resync = False
+        except Exception:
+            # Best-effort only
+            self._needs_initial_resync = False
+
     def display_player_info(self, song_path: Path):
         """Display current song info and controls"""
         song_name = song_path.stem
@@ -967,6 +986,8 @@ class MusicPlayer:
             self.start_time = time.time()
             self.total_pause_time = 0
             self.seek_offset = 0  # Reset seek offset for new song
+            # Request a one-shot resync once mixer position becomes available
+            self._needs_initial_resync = True
             # prime duration cache for clamping
             try:
                 _ = self.get_song_duration(song_path)
@@ -986,6 +1007,14 @@ class MusicPlayer:
             # Main display loop
             while self.is_playing:
                 current_time = time.time()
+
+                # One-shot resync early in playback (when mixer has a real position)
+                if self._needs_initial_resync and not self.is_paused:
+                    pos_ms = pygame.mixer.music.get_pos()
+                    # Typically > 0 once playback actually starts
+                    if pos_ms >= 0:
+                        self._resync_clock_to_audio()
+
                 current_lyric_index = self.get_current_lyric_index()
 
                 # Update display more frequently for smooth animation and quit confirmation
@@ -1156,6 +1185,14 @@ class MusicPlayer:
                         self.header_notification_until = time.time() + 3.0
                         self.header_notification_color = Fore.RED
                     continue
+
+                ### Experimental features - disabled for now - lyrics delay adjustment ###
+                # if key == ']':  # delay lyrics by +50 ms
+                #     self.lyric_delay = round(self.lyric_delay + 0.05, 3)
+                #     # self.show_message(f"Lyrics delay: {self.lyric_delay:+.3f}s")
+                # elif key == '[':  # advance lyrics by -50 ms
+                #     self.lyric_delay = round(self.lyric_delay - 0.05, 3)
+                #     # self.show_message(f"Lyrics delay: {self.lyric_delay:+.3f}s")
 
                 # Ignore anything else
             except (UnicodeDecodeError, KeyboardInterrupt):
