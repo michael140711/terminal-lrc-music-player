@@ -118,27 +118,35 @@ def menu_main(base_dir: Path):
 		print("")
 		print("== Player Menu ==")
 		print(" 1. Run")
-		print(" 2. Play All")
-		print(" 3. Play a playlist")
-		print(" 4. Create a playlist")
+		print(" 2. Run (shuffle it)")
+		print(" 3. Play All")
+		print(" 4. Play a playlist")
+		print(" 5. Create a playlist")
 		print("")
 		print(" 9. settings")
 		print(" 0. Exit")
 		choice = prompt("Select: ").strip()
 		if choice == "1":
-			# Run using current settings
-			run_with_settings(base_dir, settings)
+			# Directly run the lrc-player without reshuffling or regenerating playlist
+			clear_screen()
+			print("Starting player (no playlist changes)...")
+			launch_lrc_player(base_dir)
 			# After returning from player, re-load settings (in case modified elsewhere)
 			settings = Settings.load(cfg_path)
 		elif choice == "2":
-			# Force playlist to all songs and run
+			# One-time shuffle regardless of shuffle setting
+			run_with_settings(base_dir, settings, force_shuffle=True)
+			settings = Settings.load(cfg_path)
+		elif choice == "3":
+			# Play all songs (respect current shuffle setting)
 			temp_settings = Settings(shuffle=settings.shuffle, playlist="All songs", audio_delay=settings.audio_delay)
 			run_with_settings(base_dir, temp_settings)
 			settings = Settings.load(cfg_path)
-		elif choice == "3":
+		elif choice == "4":
+			# Play from a chosen playlist
 			choose_playlist_and_run_flow(base_dir, settings)
 			settings = Settings.load(cfg_path)
-		elif choice == "4":
+		elif choice == "5":
 			create_playlist_flow(base_dir)
 		elif choice == "9":
 			# Settings menu (in-memory only; persist on run or exit)
@@ -220,14 +228,14 @@ def build_song_list(base_dir: Path) -> list[str]:
 	return [p.name for p in list_audio_files(songs_dir)]
 
 
-def run_with_settings(base_dir: Path, settings: Settings) -> None:
+def run_with_settings(base_dir: Path, settings: Settings, *, force_shuffle: bool = False) -> None:
 	# Determine songs to use
 	if settings.playlist.strip() == "All songs":
 		songs = build_song_list(base_dir)
 	else:
 		# Use current [Playlist] from config as the active playlist
 		songs = _read_existing_playlist(base_dir)
-	if settings.shuffle:
+	if settings.shuffle or force_shuffle:
 		random.shuffle(songs)
 	# Persist full nowplaying (settings + playlist) before launching
 	cfg_path = generate_nowplaying(base_dir, settings, songs)
