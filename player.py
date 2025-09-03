@@ -13,7 +13,7 @@ SONGS_DIRNAME = "songs"
 PLAYLISTS_DIRNAME = "playlists"
 PLAYLIST_EXT = ".playlist"
 
-# Single config/nowplaying file (settings + playlist)
+# Single config file (settings + playlist)
 NOWPLAYING_CFG_FILENAME = "player-config.cfg"
 
 
@@ -32,7 +32,7 @@ class Settings:
 		if not path.exists():
 			return Settings()
 		# Allow playlist lines without '=' and parse sections safely
-		cp = ConfigParser(allow_no_value=True)
+		cp = ConfigParser(allow_no_value=True, strict=False)
 		try:
 			with path.open("r", encoding="utf-8") as f:
 				cp.read_file(f)
