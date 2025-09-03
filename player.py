@@ -404,6 +404,9 @@ def _display_song_selection(title: str, items: list[str]) -> list[str] | None:
 		inp = prompt("Select (toggle index / action, use space to toggle multiple ones): ").strip()
 		if not inp:
 			continue
+		if inp == ":x":
+			# quick back during creation flow
+			return None
 		# Multi-toggle support: when spaces present or multiple tokens, toggle indices only
 		if " " in inp:
 			tokens = inp.split()
@@ -450,7 +453,19 @@ def _prompt_new_playlist_name(base_dir: Path) -> str | None:
 		name = prompt("Enter New Playlist Name: ").strip()
 		if not name:
 			return None
-		choice = prompt(f"Your New Playlist Name is {name}, Continue (0), or change it (1)? ").strip()
+		if name == ":x":
+			return None
+		# duplicate check
+		folder = base_dir / PLAYLISTS_DIRNAME
+		target = folder / f"{name}{PLAYLIST_EXT}"
+		if target.exists():
+			clear_screen()
+			print(f"A playlist named '{name}' already exists at '{target.name}'.")
+			print("Please enter a different name, or delete the existing playlist file first.")
+			print("")
+			prompt("Press Enter to enter a new name...")
+			continue
+		choice = prompt(f"\nContinue (0, default), or change it (1)? ").strip()
 		if choice == "0":
 			return name
 		elif choice == "1":
@@ -479,6 +494,8 @@ def create_playlist_flow(base_dir: Path) -> None:
 		print(" 0. Cancel and go back")
 		sel = prompt("Select: ").strip()
 		if sel == "0":
+			return
+		if sel == ":x":
 			return
 		elif sel == "1":
 			items = build_song_list(base_dir)
@@ -538,6 +555,8 @@ def _choose_playlist_file_menu(base_dir: Path, files: list[Path], *, title: str)
 		print(" 0. Cancel and go back")
 		sel = prompt("Select: ").strip()
 		if sel == "0":
+			return None
+		if sel == ":x":
 			return None
 		try:
 			num = int(sel)
