@@ -5,6 +5,7 @@ import os
 import sys
 import random
 from configparser import ConfigParser
+from datetime import datetime
 from pathlib import Path
 
 SUPPORTED_EXTS = {".flac", ".ogg", ".aac", ".mp3"}
@@ -320,7 +321,7 @@ def list_playlist_files(base_dir: Path) -> list[Path]:
 
 def parse_playlist_file(path: Path) -> tuple[str, list[str]]:
 	"""Return (name, songs) from a .playlist file. If name missing, use stem."""
-	name = path.stem
+	name = path.stem  # Always use filename as playlist name
 	songs: list[str] = []
 	try:
 		with path.open("r", encoding="utf-8") as f:
@@ -334,18 +335,6 @@ def parse_playlist_file(path: Path) -> tuple[str, list[str]]:
 		if s.startswith("[") and s.endswith("]"):
 			in_playlist = (s == "[Playlist]")
 			continue
-		if s.lower().startswith("name") and "[Playlist_Property]" in "\n".join(lines):
-			# naive parse name from key=value in property section
-			# use last occurrence
-			try:
-				kv = line.split("=", 1)
-				if len(kv) == 2:
-					v = kv[1].strip()
-					if v.startswith('"') and v.endswith('"') and len(v) >= 2:
-						v = v[1:-1]
-					name = v or name
-			except Exception:
-				pass
 		if in_playlist and s != "" and not s.startswith("["):
 			songs.append(line)
 	return (name, songs)
@@ -357,7 +346,7 @@ def write_playlist_file(base_dir: Path, playlist_name: str, songs: list[str]) ->
 	path = folder / filename
 	lines: list[str] = []
 	lines.append("[Playlist_Property]")
-	lines.append(f"name = \"{playlist_name}\"")
+	lines.append(f"createdDateTime = \"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\"")
 	lines.append("")
 	lines.append("[Playlist]")
 	lines.extend(songs)
@@ -455,6 +444,15 @@ def _prompt_new_playlist_name(base_dir: Path) -> str | None:
 			return None
 		if name == ":x":
 			return None
+		# invalid character check for Windows filenames
+		invalid = set('\\/:*?"<>|')
+		if any(ch in invalid for ch in name):
+			clear_screen()
+			print("Playlist name contains invalid characters: \\ / : * ? \" < > |")
+			print("Please enter a valid name without those characters.")
+			print("")
+			prompt("Press Enter to enter a new name...")
+			continue
 		# duplicate check
 		folder = base_dir / PLAYLISTS_DIRNAME
 		target = folder / f"{name}{PLAYLIST_EXT}"
