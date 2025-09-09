@@ -14,8 +14,12 @@ LYRIC_API = "https://amp-api.music.apple.com/v1/catalog/us/songs/{}/syllable-lyr
 
 CSV_FILE = Path("applem-tools/playlist.csv")
 LYRICS_DIR = Path("lyrics-ttml-json")
+SKIP_DELAY = True
 DELAY_SECONDS_MIN = 3
 DELAY_SECONDS_MAX = 20
+if SKIP_DELAY == True:
+    DELAY_SECONDS_MIN = 1
+    DELAY_SECONDS_MAX = 3
 
 STATE_FILE = Path("applem-tools/state.json")
 use_persistent_context = False
@@ -68,6 +72,8 @@ async def pause_for_login() -> None:
 
 async def get_tokens_with_retry(page, attempts: int = 6, delay_ms: int = 1500):
     for i in range(1, attempts + 1):
+        print("Waiting for Chrome, or user login... (10s)")
+        await page.wait_for_timeout(10000)
         tokens = await page.evaluate(GET_TOKENS_JS)
         dev, usr = tokens.get("developerToken"), tokens.get("musicUserToken")
         if dev and usr:
