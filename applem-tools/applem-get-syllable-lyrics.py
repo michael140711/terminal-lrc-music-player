@@ -68,6 +68,8 @@ async def pause_for_login() -> None:
 
 async def get_tokens_with_retry(page, attempts: int = 6, delay_ms: int = 1500):
     for i in range(1, attempts + 1):
+        print("Waiting for Chrome, or user login... (10s)")
+        await page.wait_for_timeout(10000)
         tokens = await page.evaluate(GET_TOKENS_JS)
         dev, usr = tokens.get("developerToken"), tokens.get("musicUserToken")
         if dev and usr:
