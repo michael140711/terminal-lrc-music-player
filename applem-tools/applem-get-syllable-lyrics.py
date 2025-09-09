@@ -14,8 +14,12 @@ LYRIC_API = "https://amp-api.music.apple.com/v1/catalog/us/songs/{}/syllable-lyr
 
 CSV_FILE = Path("applem-tools/playlist.csv")
 LYRICS_DIR = Path("lyrics-ttml-json")
+SKIP_DELAY = True
 DELAY_SECONDS_MIN = 3
 DELAY_SECONDS_MAX = 20
+if SKIP_DELAY == True:
+    DELAY_SECONDS_MIN = 1
+    DELAY_SECONDS_MAX = 3
 
 STATE_FILE = Path("applem-tools/state.json")
 use_persistent_context = False
