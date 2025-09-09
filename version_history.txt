@@ -1,4 +1,5 @@
-PENDING UPDATE 8/29/2025 9:04 AM
+
+3.10.4 8/29/2025 9:04 AM
  1. Get all songs in a playlist, then run get-playlist
  2. run parse playlist
  3. then run get syllable lyrics
@@ -7,6 +8,14 @@ PENDING UPDATE 8/29/2025 9:04 AM
  1. copy ttml lyrics from inspection from 🍏 music
  2. run convert-ttml-to-lrc
  ----
+3.10.3 9/3/2025 12:14 PM
+ - fixed a major bug (issue #20) where lrc-player would have lyric run faster than the audio, especially when
+   there are longer lyrics needed to parse.
+   Now it would re-adjust the time after everything is loaded properly.
+
+3.10.2
+ - update player.py with more menu option, now playlist function is available!!
+ - update player.py with more menu option, where it can run it directly or run it shuffle.
 
 3.10.1
  - Removed a set a minimun/max for timestamp duration.

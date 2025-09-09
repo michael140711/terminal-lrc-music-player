@@ -15,6 +15,7 @@ songs/
 lyrics/
 lyrics-ttml-json/
 music/
+playlists/
 
 # Other files that not for git
 version control/
