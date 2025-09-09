@@ -35,7 +35,7 @@ except ImportError:
         DIM = NORMAL = BRIGHT = RESET_ALL = ""
 
 CFG_FILENAME = "player-config.cfg"
-SONGS_DIRNAME = "songs"
+SONGS_DIRNAME = "music"
 LYRICS_LINE_SWITCHING_ON_END = True # Whether to switch to next line when the current line ends
 
 
@@ -163,6 +163,23 @@ class LRCParser:
         return lyrics
 
 
+    @staticmethod
+    def detect_michael_author(lrc_path: Path) -> bool:
+        """Check if LRC file contains [author:michael] tag"""
+        if not lrc_path.exists():
+            return False
+
+        try:
+            with open(lrc_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # Look for [author:michael] tag (case insensitive)
+            author_pattern = r'\[author:\s*michael\s*\]'
+            return bool(re.search(author_pattern, content, re.IGNORECASE))
+        except Exception:
+            return False
+
+
 class MusicPlayer:
     def __init__(self, base_dir: Path):
         self.base_dir = base_dir
@@ -201,6 +218,10 @@ class MusicPlayer:
         self._input_thread_stop = None
         # One-shot initial resync flag
         self._needs_initial_resync = False
+        # Special animation for Michael's lyrics
+        self.is_michael_lyrics = False
+        self.michael_animation_start_time = 0.0
+        self.michael_animation_duration = 2.0  # 2 seconds
 
     # Initialize pygame mixer
     pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
@@ -476,11 +497,19 @@ class MusicPlayer:
 
     def load_lyrics(self, song_path: Path) -> List[LyricLine]:
         """Load lyrics for the given song with support for partial name matching"""
+        # Reset Michael lyrics flag
+        self.is_michael_lyrics = False
+
         # First, try exact match (current behavior)
         lrc_path = song_path.with_suffix('.lrc')
         if lrc_path.exists():
             lyrics = LRCParser.parse_lrc_file(lrc_path)
             if lyrics:
+                # Check if this is Michael's lyrics
+                self.is_michael_lyrics = LRCParser.detect_michael_author(lrc_path)
+                if self.is_michael_lyrics:
+                    print(f"Detected Michael's lyrics! Special animation enabled.")
+
                 precise_count = sum(1 for lyric in lyrics if lyric.is_precise)
                 if precise_count > 0:
                     print(f"Detected precise LRC with word-by-word timing ({precise_count} lines)")
@@ -494,6 +523,11 @@ class MusicPlayer:
         if best_match:
             lyrics = LRCParser.parse_lrc_file(best_match)
             if lyrics:
+                # Check if this is Michael's lyrics
+                self.is_michael_lyrics = LRCParser.detect_michael_author(best_match)
+                if self.is_michael_lyrics:
+                    print(f"Detected Michael's lyrics! Special animation enabled.")
+
                 precise_count = sum(1 for lyric in lyrics if lyric.is_precise)
                 if precise_count > 0:
                     print(f"Detected precise LRC with word-by-word timing ({precise_count} lines)")
@@ -505,11 +539,20 @@ class MusicPlayer:
 
     def load_lyrics_from_file(self, lrc_path: Path, *, verbose: bool = True) -> List[LyricLine]:
         """Load lyrics from a specific LRC file path."""
+        # Reset Michael lyrics flag
+        self.is_michael_lyrics = False
+
         lyrics = LRCParser.parse_lrc_file(lrc_path)
-        if lyrics and verbose:
-            precise_count = sum(1 for lyric in lyrics if lyric.is_precise)
-            if precise_count > 0:
-                print(f"Detected precise LRC with word-by-word timing ({precise_count} lines)")
+        if lyrics:
+            # Check if this is Michael's lyrics
+            self.is_michael_lyrics = LRCParser.detect_michael_author(lrc_path)
+            if self.is_michael_lyrics and verbose:
+                print(f"Detected Michael's lyrics! Special animation enabled.")
+
+            if verbose:
+                precise_count = sum(1 for lyric in lyrics if lyric.is_precise)
+                if precise_count > 0:
+                    print(f"Detected precise LRC with word-by-word timing ({precise_count} lines)")
         return lyrics
 
     def clear_screen(self):
@@ -580,11 +623,40 @@ class MusicPlayer:
         """Playback time used for lyrics display/animation (applies Bluetooth delay)."""
         return max(0.0, self.get_playback_position() - self.lyric_delay)
 
+    def create_michael_animation(self) -> List[str]:
+        """Create special animation for Michael's lyrics"""
+        current_time = time.time()
+        elapsed = current_time - self.michael_animation_start_time
+
+        # Animation phases
+        if elapsed < 2.0:
+            # Phase 1: Sparkle effect
+            sparkles = ["✨", "⭐", "🌟", "💫", "⚡"]
+            sparkle = sparkles[int(elapsed * 10) % len(sparkles)]
+            return [
+                "",
+                f"{Fore.MAGENTA}              {sparkle} {sparkle} {sparkle} {sparkle} {sparkle}{Style.RESET_ALL}",
+                f"{Fore.CYAN}    🎵 Enhanced LRC Made by Michael 🎵{Style.RESET_ALL}",
+                f"{Fore.MAGENTA}              {sparkle} {sparkle} {sparkle} {sparkle} {sparkle}{Style.RESET_ALL}",
+                ""
+            ]
+        else:
+            return []  # Animation finished
+
     def display_lyrics(self):
         """Display lyrics with current line highlighted and word-by-word for precise LRC"""
         if not self.current_lyrics:
             return []
 
+        # Check if we should show Michael's special animation
+        if (self.is_michael_lyrics and
+            hasattr(self, 'michael_animation_start_time') and
+            time.time() - self.michael_animation_start_time < self.michael_animation_duration):
+            animation = self.create_michael_animation()
+            if animation:  # If animation is still running
+                return animation
+
+        # Normal lyrics display
         # Get current playback position
         current_time = self.get_lyrics_time()
 
@@ -988,6 +1060,11 @@ class MusicPlayer:
             self.seek_offset = 0  # Reset seek offset for new song
             # Request a one-shot resync once mixer position becomes available
             self._needs_initial_resync = True
+
+            # Set Michael animation start time if this is Michael's lyrics
+            if self.is_michael_lyrics:
+                self.michael_animation_start_time = time.time()
+
             # prime duration cache for clamping
             try:
                 _ = self.get_song_duration(song_path)
