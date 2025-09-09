@@ -92,6 +92,8 @@ async def pause_for_login() -> None:
 
 async def get_tokens_with_retry(page, attempts: int = 6, delay_ms: int = 15000):
     for i in range(1, attempts + 1):
+        print("Waiting for Chrome, or user login... (10s)")
+        await page.wait_for_timeout(10000)
         tokens = await page.evaluate(GET_TOKENS_JS)
         dev, usr = tokens.get("developerToken"), tokens.get("musicUserToken")
         if dev and usr:
@@ -145,10 +147,10 @@ async def main(playlist_id: str) -> None:
             FETCH_JSON_JS,
             {"url": playlist_url, "devToken": dev_token, "userToken": user_token},
         )
-        Path("playlist.json").write_text(
+        Path("applem-tools\playlist.json").write_text(
             json.dumps(final.get("data"), ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        print("Playlist response saved to playlist.json")
+        print("Playlist response saved to applem-tools\playlist.json")
 
         if not use_persistent_context:
             await browser.close()
