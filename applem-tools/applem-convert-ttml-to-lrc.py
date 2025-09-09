@@ -151,10 +151,12 @@ def convert_ttml_string_to_elrc(ttml_xml: str, output_path: Path, display_type_h
 
     # Apple’s iTunes TTML often carries a global lyricOffset
     offset_sec = 0.0
+    offset_raw: str | None = None
     audio_el = root.find(".//itunes:audio", ns)
     if audio_el is not None and "lyricOffset" in audio_el.attrib:
         try:
-            offset_sec = float(audio_el.attrib["lyricOffset"])
+            offset_raw = (audio_el.attrib.get("lyricOffset") or "").strip() or None
+            offset_sec = float(offset_raw) if offset_raw is not None else 0.0
         except Exception:
             offset_sec = 0.0
 
@@ -165,7 +167,9 @@ def convert_ttml_string_to_elrc(ttml_xml: str, output_path: Path, display_type_h
     out_lines.append("[re:TTML→LRC]")
     if dur_sec is not None:
         out_lines.append(f"[length:{fmt_lrc_time(dur_sec)}]")
-    out_lines.append("[offset:0]")  # we bake the offset into timestamps
+    # Advertise the original lyricOffset in the header (player can ignore if undesired).
+    # We still bake the offset into per-token timestamps via apply_offset below.
+    out_lines.append(f"[offset:{offset_raw}]" if offset_raw is not None else "[offset:0]")
 
     def apply_offset(t):
         return t - offset_sec if subtract_itunes_offset else t + offset_sec
