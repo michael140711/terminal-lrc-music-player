@@ -2,7 +2,7 @@
 lrc-player
 """
 temp_ratio = 0.15
-version = f"3.10.3"
+version = f"3.10.4"
 author = "Michael"
 
 import os
