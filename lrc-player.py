@@ -378,7 +378,14 @@ class MusicPlayer:
                 partials.append((lrc_file, score))
 
         # Sort partials by score desc, then by filename for stability
-        partials.sort(key=lambda x: (-x[1], x[0].name))
+        def sort_key(x):
+            path, score = x
+            filename_lower = path.name.lower()
+            has_michael = 'michael' in filename_lower or 'mic' in filename_lower
+            return (not has_michael, -score, path.name)  # not has_michael puts True first
+
+        partials.sort(key=sort_key)
+        # partials.sort(key=lambda x: (-x[1], x[0].name))
         ordered = exact_matches + [p[0] for p in partials]
 
         # De-duplicate while preserving order
