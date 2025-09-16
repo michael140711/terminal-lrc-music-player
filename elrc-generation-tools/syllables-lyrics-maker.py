@@ -2,11 +2,12 @@
 Syllables Lyrics Maker
 ----------------------
 
-Split lyrics into syllables using a hyphenation-based approach.
+Split lyrics into syllables using a hyphenation-based approach with custom overrides for rap/hip-hop lyrics.
 
 Defaults:
 - Language: en_US (Pyphen patterns)
 - Separator: backtick (`) to avoid conflicts with common punctuation in lyrics
+- Custom mappings: custom-syllables.json in the same directory
 
 Usage examples:
 - Read from stdin and print to stdout:
@@ -18,17 +19,30 @@ Usage examples:
 - Read from file and write to file:
     py elrc-generation-tools/syllables-lyrics-maker.py --in lyrics/input.txt --out temp/output.txt
 
+- Use a different custom mappings file:
+    py elrc-generation-tools/syllables-lyrics-maker.py --custom my-custom.json --text "Yeah imma finna drop this"
+
+Custom Syllable Mappings:
+- The script automatically looks for custom-syllables.json in the same directory
+- Edit this JSON file to add your own word-to-syllable mappings
+- Custom mappings override the pyphen dictionary for better rap/hip-hop syllabification
+- Words are matched case-insensitively (e.g., "YEAH" matches "yeah" in the file)
+- Use the same separator (`) as specified by --sep
+
 Notes:
 - For most English lyrics, Pyphen works well. For unknown words/slang, it may leave the word unsplit.
 - You can change the separator with --sep (e.g., --sep "·" or --sep "‧").
+- Custom mappings are perfect for rap contractions like "imma", "finna", "gonna", etc.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import subprocess
 import sys
-from typing import Iterable
+from typing import Dict, Iterable
 
 try:
     import pyphen  # type: ignore
@@ -39,26 +53,91 @@ except Exception as exc:  # pragma: no cover - runtime guidance if dependency mi
     raise
 
 
-def syllabify_word(word: str, dic: "pyphen.Pyphen", sep: str) -> str:
+def load_custom_mappings(custom_file: str) -> Dict[str, str]:
+    """Load custom syllable mappings from JSON file.
+
+    Returns a dictionary where keys are lowercase words and values are their
+    syllabified versions. Returns empty dict if file doesn't exist or has errors.
+    """
+    if not os.path.exists(custom_file):
+        return {}
+
+    try:
+        with open(custom_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        # Filter out JSON comments and instructions (keys starting with _)
+        # Convert all keys to lowercase for case-insensitive matching
+        mappings = {k.lower(): v for k, v in data.items() if not k.startswith('_')}
+        return mappings
+    except Exception as ex:
+        sys.stderr.write(f"Warning: Could not load custom mappings from {custom_file}: {ex}\n")
+        return {}
+
+
+def syllabify_word(word: str, dic: "pyphen.Pyphen", sep: str, custom_mappings: Dict[str, str]) -> str:
     """Return the word split into syllables using `sep`.
 
-    Keeps original casing. If no split points are known, returns the word unchanged.
+    First checks custom_mappings for the word (case-insensitive). If found, uses that.
+    Otherwise falls back to pyphen dictionary. Keeps original casing when possible.
     """
     if not word:
         return word
     # Fast path for non-alpha tokens (numbers/mixed): leave unchanged
     if not any(ch.isalpha() for ch in word):
         return word
+
+    # Check custom mappings first (case-insensitive)
+    word_lower = word.lower()
+    if word_lower in custom_mappings:
+        custom_result = custom_mappings[word_lower]
+        # Try to preserve original casing if the custom mapping uses the same separator
+        if sep in custom_result:
+            # Split both the original word and custom mapping, then try to match casing
+            original_parts = word.split() if ' ' in word else [word]  # fallback for complex cases
+            custom_parts = custom_result.split(sep)
+
+            # Simple case preservation: if lengths match, copy case from original
+            if len(original_parts) == 1 and len(custom_parts) > 1:
+                # Apply casing from the original word to each syllable part
+                result_parts = []
+                char_idx = 0
+                for part in custom_parts:
+                    if char_idx < len(word):
+                        # Copy case character by character
+                        new_part = ""
+                        for char in part:
+                            if char_idx < len(word) and char.isalpha():
+                                if word[char_idx].isupper():
+                                    new_part += char.upper()
+                                else:
+                                    new_part += char.lower()
+                                char_idx += 1
+                            else:
+                                new_part += char
+                        result_parts.append(new_part)
+                    else:
+                        result_parts.append(part)
+                return sep.join(result_parts)
+        return custom_result
+
+    # Fall back to pyphen
     return dic.inserted(word, hyphen=sep)
 
 
-def syllabify_text(text: str, lang: str = "en_US", sep: str = "`") -> str:
+def syllabify_text(text: str, lang: str = "en_US", sep: str = "`", custom_file: str = None) -> str:
     """Syllabify all words in the given text while preserving whitespace and punctuation.
 
     Strategy:
+    - Load custom mappings if custom_file is provided
     - Walk the text char-by-char, buffering alphabetic runs (including apostrophes) as words.
-    - On boundaries, flush word via Pyphen; copy all other characters unchanged.
+    - On boundaries, flush word via custom mappings first, then Pyphen; copy all other characters unchanged.
     """
+    # Load custom mappings
+    custom_mappings = {}
+    if custom_file:
+        custom_mappings = load_custom_mappings(custom_file)
+
     dic = pyphen.Pyphen(lang=lang)
 
     out: list[str] = []
@@ -67,7 +146,7 @@ def syllabify_text(text: str, lang: str = "en_US", sep: str = "`") -> str:
     def flush() -> None:
         if buf:
             word = "".join(buf)
-            out.append(syllabify_word(word, dic, sep))
+            out.append(syllabify_word(word, dic, sep, custom_mappings))
             buf.clear()
 
     apostrophes = {"'", "’"}  # ASCII and Unicode right single quote
@@ -126,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", dest="outfile", help="Output file (otherwise prints to stdout)")
     p.add_argument("--text", help="Process this text directly (overrides --in/stdin)")
     p.add_argument("--clip", action="store_true", help="Read input from the clipboard")
+    p.add_argument("--custom", help="Custom syllable mappings JSON file (default: custom-syllables.json in same directory)")
 
     args = p.parse_args(argv)
 
@@ -150,8 +230,15 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         src = sys.stdin.read()
 
+    # Determine custom mappings file
+    custom_file = args.custom
+    if custom_file is None:
+        # Default to custom-syllables.json in the same directory as this script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        custom_file = os.path.join(script_dir, "custom-syllables.json")
+
     try:
-        result = syllabify_text(src, lang=args.lang, sep=args.sep)
+        result = syllabify_text(src, lang=args.lang, sep=args.sep, custom_file=custom_file)
     except KeyError as e:
         sys.stderr.write(
             f"Language '{args.lang}' not found in Pyphen patterns. Try en_US or see pyphen docs.\n"
