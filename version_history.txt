@@ -1,3 +1,5 @@
+3.10.5 9/23/2025 12:47 PM
+ - Updated Apple-M Tools: Apple API updated ttml key from 'ttml' to 'ttmlLocalizations'
 
 3.10.4 8/29/2025 9:04 AM
  1. Get all songs in a playlist, then run get-playlist
@@ -12,6 +14,9 @@
  - fixed a major bug (issue #20) where lrc-player would have lyric run faster than the audio, especially when
    there are longer lyrics needed to parse.
    Now it would re-adjust the time after everything is loaded properly.
+
+ - Converter update: add support for Apple JSON `attributes.ttmlLocalizations` (in addition to legacy `ttml`).
+   Handles string or localized map/list (prefers English when available).
 
 3.10.2
  - update player.py with more menu option, now playlist function is available!!
