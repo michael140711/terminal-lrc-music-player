@@ -37,9 +37,59 @@ from xml.etree import ElementTree as ET
 import json, re, sys, subprocess, shutil
 
 def _deep_find_ttml_and_display(obj):
-    """Recursively search for a TTML string and displayType in an Apple Music response."""
+    """Recursively search for a TTML string and displayType in an Apple Music response.
+
+    Supports both legacy `ttml` and new `ttmlLocalizations` under `attributes`.
+    `ttmlLocalizations` may be a string (raw TTML) or a map/list of localized entries.
+    """
     ttml_value = None
     display_type = None
+
+    preferred_locales = ("en", "en-US", "en_US", "en-GB", "en_GB")
+
+    def from_localizations(val):
+        # Accept various possible shapes for ttmlLocalizations
+        # - string: direct TTML
+        # - dict: locale -> ttml OR locale -> { ttml: "..." }
+        # - list: [ { locale, ttml }, ttml, ... ]
+        if isinstance(val, str):
+            return val
+        if isinstance(val, dict):
+            # Prefer English locales if present
+            for key in preferred_locales:
+                if key in val:
+                    v = val[key]
+                    if isinstance(v, str):
+                        return v
+                    if isinstance(v, dict):
+                        # common nested form
+                        if isinstance(v.get("ttml"), str):
+                            return v.get("ttml")
+            # Fallback: first string value
+            for v in val.values():
+                if isinstance(v, str):
+                    return v
+                if isinstance(v, dict) and isinstance(v.get("ttml"), str):
+                    return v.get("ttml")
+            return None
+        if isinstance(val, list):
+            # Prefer items with explicit locale first
+            for loc in preferred_locales:
+                for item in val:
+                    if isinstance(item, dict) and item.get("locale") in (loc, loc.replace("_", "-"), loc.replace("-", "_")):
+                        t = item.get("ttml")
+                        if isinstance(t, str):
+                            return t
+            # Otherwise return the first usable string
+            for item in val:
+                if isinstance(item, str):
+                    return item
+                if isinstance(item, dict):
+                    t = item.get("ttml")
+                    if isinstance(t, str):
+                        return t
+            return None
+        return None
 
     def visit(node):
         nonlocal ttml_value, display_type
@@ -51,10 +101,17 @@ def _deep_find_ttml_and_display(obj):
                 if isinstance(dt, int):
                     display_type = dt
 
+            # Legacy key
             if ttml_value is None and isinstance(node.get("ttml"), str):
                 ttml_value = node["ttml"]
 
-            # common Apple schema: { data: [ { attributes: { ttml, playParams.displayType } } ] }
+            # New key: ttmlLocalizations
+            if ttml_value is None and node.get("ttmlLocalizations") is not None:
+                candidate = from_localizations(node.get("ttmlLocalizations"))
+                if isinstance(candidate, str):
+                    ttml_value = candidate
+
+            # common Apple schema: { data: [ { attributes: { ttml/ttmlLocalizations, playParams.displayType } } ] }
             attrs = node.get("attributes")
             if isinstance(attrs, dict):
                 visit(attrs)
@@ -99,6 +156,8 @@ def coerce_raw_to_ttml_input(raw: str) -> tuple[str, int | None]:
     except Exception:
         # As a last resort, try to extract via regex
         m = re.search(r'"ttml"\s*:\s*"(.*?)"\s*(,|\}|$)', raw, flags=re.S)
+        if not m:
+            m = re.search(r'"ttmlLocalizations"\s*:\s*"(.*?)"\s*(,|\}|$)', raw, flags=re.S)
         if m:
             ttml_escaped = m.group(1)
             return bytes(ttml_escaped, "utf-8").decode("unicode_escape"), None
@@ -106,7 +165,7 @@ def coerce_raw_to_ttml_input(raw: str) -> tuple[str, int | None]:
 
     ttml, display_type = _deep_find_ttml_and_display(json_obj)
     if not ttml:
-        raise ValueError("Unable to locate 'ttml' in the provided input")
+        raise ValueError("Unable to locate 'ttml' or 'ttmlLocalizations' in the provided input")
     return ttml, display_type
 
 def coerce_to_ttml_input(path: Path) -> tuple[str, int | None]:
