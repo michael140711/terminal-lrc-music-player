@@ -12,8 +12,14 @@ import threading
 from pathlib import Path
 import re
 from typing import List, Tuple, Optional
-import msvcrt  # Windows-specific for keyboard input
+import select
 import math  # <-- add this
+
+if os.name == 'nt':
+    import msvcrt  # Windows-specific for keyboard input
+else:
+    import termios
+    import tty
 
 try:
     import pygame
@@ -1161,129 +1167,187 @@ class MusicPlayer:
         if stop_event is None:
             # Nothing to do; defensive guard
             return True
-        def _read_key_event() -> Optional[str]:
-            """Translate msvcrt byte sequences to high-level keys; ignore combos/modifiers."""
-            if not msvcrt.kbhit():
-                return None
 
-            b = msvcrt.getch()
-            # Extended keys start with 0x00 or 0xE0; next byte determines key
-            if b in (b'\x00', b'\xe0'):
-                if not msvcrt.kbhit():
-                    # Incomplete sequence; ignore
-                    return None
-                b2 = msvcrt.getch()
-                # Map only left/right arrows; ignore everything else (prevents key combinations)
-                if b2 == b'K':
-                    return 'LEFT'
-                if b2 == b'M':
-                    return 'RIGHT'
-                return None
-
-            # Regular keys
+        # On Unix-like terminals, switch stdin to cbreak mode for immediate key reads.
+        stdin_fd = None
+        old_stdin_attrs = None
+        if os.name != 'nt':
             try:
-                ch = b.decode('utf-8', errors='ignore')
+                if sys.stdin.isatty():
+                    stdin_fd = sys.stdin.fileno()
+                    old_stdin_attrs = termios.tcgetattr(stdin_fd)
+                    tty.setcbreak(stdin_fd)
             except Exception:
+                stdin_fd = None
+                old_stdin_attrs = None
+
+        def _read_key_event() -> Optional[str]:
+            """Translate platform key sequences to high-level keys; ignore combos/modifiers."""
+            if os.name == 'nt':
+                if not msvcrt.kbhit():
+                    return None
+
+                b = msvcrt.getch()
+                # Extended keys start with 0x00 or 0xE0; next byte determines key
+                if b in (b'\x00', b'\xe0'):
+                    if not msvcrt.kbhit():
+                        # Incomplete sequence; ignore
+                        return None
+                    b2 = msvcrt.getch()
+                    # Map only left/right arrows; ignore everything else (prevents key combinations)
+                    if b2 == b'K':
+                        return 'LEFT'
+                    if b2 == b'M':
+                        return 'RIGHT'
+                    return None
+
+                # Regular keys
+                try:
+                    ch = b.decode('utf-8', errors='ignore')
+                except Exception:
+                    return None
+            else:
+                if stdin_fd is None:
+                    return None
+                # Non-blocking poll; read from terminal only when there is data.
+                ready, _, _ = select.select([sys.stdin], [], [], 0)
+                if not ready:
+                    return None
+                try:
+                    b = os.read(stdin_fd, 1)
+                except Exception:
+                    return None
+                if not b:
+                    return None
+                ch = b.decode('utf-8', errors='ignore')
+                if not ch:
+                    return None
+
+                # Escape sequences for arrows in most macOS/Linux terminals.
+                if ch == '\x1b':
+                    seq = b''
+                    for _ in range(2):
+                        ready, _, _ = select.select([sys.stdin], [], [], 0.005)
+                        if not ready:
+                            break
+                        seq += os.read(stdin_fd, 1)
+                    seq_str = '\x1b' + seq.decode('utf-8', errors='ignore')
+                    if seq_str in ('\x1b[D', '\x1bOD'):
+                        return 'LEFT'
+                    if seq_str in ('\x1b[C', '\x1bOC'):
+                        return 'RIGHT'
+                    return None
+
+            # Shared printable-key filtering
+            if ch == '\r':
+                return None
+            if ch == '\n':
                 return None
 
-            if not ch:
-                return None
-            # Filter out control characters and combinations (non-printable)
+            # Filter out control characters and combinations (non-printable).
+            # Space is allowed and used for pause/resume.
             if ord(ch) < 32:
                 return None
             return ch.lower()
-        while self.is_playing and not stop_event.is_set():
-            try:
-                key = _read_key_event()
-                if key is None:
-                    time.sleep(0.03)
-                    continue
+        try:
+            while self.is_playing and not stop_event.is_set():
+                try:
+                    key = _read_key_event()
+                    if key is None:
+                        time.sleep(0.03)
+                        continue
 
-                if key == 'LEFT':
-                    self.seek_audio(-5.0)
-                    continue
-                if key == 'RIGHT':
-                    self.seek_audio(5.0)
-                    continue
+                    if key == 'LEFT':
+                        self.seek_audio(-5.0)
+                        continue
+                    if key == 'RIGHT':
+                        self.seek_audio(5.0)
+                        continue
 
-                if key == ' ':  # Space bar - pause/resume
-                    if self.is_paused:
-                        pygame.mixer.music.unpause()
-                        # Calculate total pause duration and add to total_pause_time
-                        pause_duration = time.time() - self.pause_start_time
-                        self.total_pause_time += pause_duration
-                        self.is_paused = False
-                    else:
-                        pygame.mixer.music.pause()
-                        self.pause_start_time = time.time()
-                        self.is_paused = True
-                    continue
+                    if key == ' ':  # Space bar - pause/resume
+                        if self.is_paused:
+                            pygame.mixer.music.unpause()
+                            # Calculate total pause duration and add to total_pause_time
+                            pause_duration = time.time() - self.pause_start_time
+                            self.total_pause_time += pause_duration
+                            self.is_paused = False
+                        else:
+                            pygame.mixer.music.pause()
+                            self.pause_start_time = time.time()
+                            self.is_paused = True
+                        continue
 
-                if key == 'n':  # Next song
-                    if self.current_song_index >= len(self.playlist) - 1:
-                        self.show_message("Reached bottom")
-                    else:
-                        self.navigation_action = 'next'
-                        self.is_playing = False
-                        pygame.mixer.music.stop()
-                    continue
+                    if key == 'n':  # Next song
+                        if self.current_song_index >= len(self.playlist) - 1:
+                            self.show_message("Reached bottom")
+                        else:
+                            self.navigation_action = 'next'
+                            self.is_playing = False
+                            pygame.mixer.music.stop()
+                        continue
 
-                if key == 'p':  # Previous song
-                    if self.current_song_index <= 0:
-                        self.show_message("Reached top")
-                    else:
-                        self.navigation_action = 'previous'
-                        self.is_playing = False
-                        pygame.mixer.music.stop()
-                    continue
+                    if key == 'p':  # Previous song
+                        if self.current_song_index <= 0:
+                            self.show_message("Reached top")
+                        else:
+                            self.navigation_action = 'previous'
+                            self.is_playing = False
+                            pygame.mixer.music.stop()
+                        continue
 
-                if key == 'v':  # Switch to next lyrics file (cycle)
-                    try:
-                        if self.current_lyric_candidates:
-                            self.current_lyric_choice_index = (
-                                (self.current_lyric_choice_index + 1) % len(self.current_lyric_candidates)
-                            )
-                            new_path = self.current_lyric_candidates[self.current_lyric_choice_index]
-                            new_lyrics = self.load_lyrics_from_file(new_path, verbose=False)
-                            if new_lyrics:
-                                self.current_lyrics = new_lyrics
-                                self.current_lrc_path = new_path
-                                # header notification for 3 seconds
-                                self.header_notification = f"Displaying: {new_path.name}"
-                                self.header_notification_until = time.time() + 3.0
-                                self.header_notification_color = Fore.GREEN
-                    except Exception:
-                        # Stay silent per requirement; ignore switching errors
-                        pass
-                    continue
+                    if key == 'v':  # Switch to next lyrics file (cycle)
+                        try:
+                            if self.current_lyric_candidates:
+                                self.current_lyric_choice_index = (
+                                    (self.current_lyric_choice_index + 1) % len(self.current_lyric_candidates)
+                                )
+                                new_path = self.current_lyric_candidates[self.current_lyric_choice_index]
+                                new_lyrics = self.load_lyrics_from_file(new_path, verbose=False)
+                                if new_lyrics:
+                                    self.current_lyrics = new_lyrics
+                                    self.current_lrc_path = new_path
+                                    # header notification for 3 seconds
+                                    self.header_notification = f"Displaying: {new_path.name}"
+                                    self.header_notification_until = time.time() + 3.0
+                                    self.header_notification_color = Fore.GREEN
+                        except Exception:
+                            # Stay silent per requirement; ignore switching errors
+                            pass
+                        continue
 
-                if key == 'q':  # Quit with confirmation
-                    if self.quit_confirmation_time > 0 and time.time() - self.quit_confirmation_time <= 3.0:
-                        self.navigation_action = 'quit'
-                        self.is_playing = False
-                        pygame.mixer.music.stop()
-                        return False
-                    else:
-                        self.quit_confirmation_time = time.time()
-                        self.quit_message_displayed = True
-                        # Show quit confirmation in header for 3 seconds, in red
-                        self.header_notification = "Press 'Q' again to quit (within 3 seconds)"
-                        self.header_notification_until = time.time() + 3.0
-                        self.header_notification_color = Fore.RED
-                    continue
+                    if key == 'q':  # Quit with confirmation
+                        if self.quit_confirmation_time > 0 and time.time() - self.quit_confirmation_time <= 3.0:
+                            self.navigation_action = 'quit'
+                            self.is_playing = False
+                            pygame.mixer.music.stop()
+                            return False
+                        else:
+                            self.quit_confirmation_time = time.time()
+                            self.quit_message_displayed = True
+                            # Show quit confirmation in header for 3 seconds, in red
+                            self.header_notification = "Press 'Q' again to quit (within 3 seconds)"
+                            self.header_notification_until = time.time() + 3.0
+                            self.header_notification_color = Fore.RED
+                        continue
 
-                ### Experimental features - disabled for now - lyrics delay adjustment ###
-                # if key == ']':  # delay lyrics by +50 ms
-                #     self.lyric_delay = round(self.lyric_delay + 0.05, 3)
-                #     # self.show_message(f"Lyrics delay: {self.lyric_delay:+.3f}s")
-                # elif key == '[':  # advance lyrics by -50 ms
-                #     self.lyric_delay = round(self.lyric_delay - 0.05, 3)
-                #     # self.show_message(f"Lyrics delay: {self.lyric_delay:+.3f}s")
+                    ### Experimental features - disabled for now - lyrics delay adjustment ###
+                    # if key == ']':  # delay lyrics by +50 ms
+                    #     self.lyric_delay = round(self.lyric_delay + 0.05, 3)
+                    #     # self.show_message(f"Lyrics delay: {self.lyric_delay:+.3f}s")
+                    # elif key == '[':  # advance lyrics by -50 ms
+                    #     self.lyric_delay = round(self.lyric_delay - 0.05, 3)
+                    #     # self.show_message(f"Lyrics delay: {self.lyric_delay:+.3f}s")
 
-                # Ignore anything else
-            except (UnicodeDecodeError, KeyboardInterrupt):
-                pass
-            time.sleep(0.03)
+                    # Ignore anything else
+                except (UnicodeDecodeError, KeyboardInterrupt):
+                    pass
+                time.sleep(0.03)
+        finally:
+            if old_stdin_attrs is not None and stdin_fd is not None:
+                try:
+                    termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_stdin_attrs)
+                except Exception:
+                    pass
 
         return True
 
