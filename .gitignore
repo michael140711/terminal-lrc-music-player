@@ -10,7 +10,12 @@
 # lyrics
 *.lrc
 
-# folders
+# sys folders/files
+.__pycache__/
+.venv/
+.DS_Store
+
+# folders for music and lyrics
 songs/
 lyrics/
 lyrics-ttml-json/
